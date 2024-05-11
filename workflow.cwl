@@ -191,7 +191,7 @@ steps:
       - id: docker_script
         default:
           class: File
-          location: "run_docker.py"
+          location: "steps/run_docker.py"
     out:
       - id: predictions
 
