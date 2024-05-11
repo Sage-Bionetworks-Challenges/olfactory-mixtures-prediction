@@ -21,8 +21,3 @@ By combining these two metrics, the challenge provides a comprehensive evaluatio
 
 Code for the above computations are available in the `evaluation` folder of the repo.
 
-## Evaluation Scripts
-
-Scripts for validation and scoring are available under `./evaluation`.
-
-[Olfactory Mixtures Predictions DREAM Challenge]: https://www.synapse.org/dreamOlfactoryMixturesPredictionChallenge
