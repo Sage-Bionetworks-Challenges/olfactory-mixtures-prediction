@@ -21,3 +21,4 @@ By combining these two metrics, the challenge provides a comprehensive evaluatio
 
 Code for the above computations are available in the `evaluation` folder of the repo.
 
+[Olfactory Mixtures Predictions DREAM Challenge]: https://www.synapse.org/#!Synapse:syn53470621/wiki/626022
