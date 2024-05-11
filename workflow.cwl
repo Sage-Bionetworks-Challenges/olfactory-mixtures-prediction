@@ -91,7 +91,7 @@ steps:
       - id: docker_authentication
 
   validate_docker:
-    doc: Check that submission is a Docker image.
+    doc: Check that submission is a valid Docker image.
     run: steps/validate_docker.cwl
     in:
       - id: submissionid
@@ -103,7 +103,7 @@ steps:
       - id: status
       - id: invalid_reasons
 
-  email_docker_validation:
+  notify_docker_status:
     doc: Notify participant if submission is not a Docker image.
     run: |-
       https://raw.githubusercontent.com/Sage-Bionetworks/ChallengeWorkflowTemplates/v4.1/cwl/validate_email.cwl
@@ -120,7 +120,7 @@ steps:
         default: true
     out: [finished]
 
-  annotate_docker_validation_with_output:
+  add_status_annots:
     doc: >
       Add 'submission_status' and 'submission_errors' annotations to the
       submission
@@ -147,9 +147,9 @@ steps:
       - id: status
         source: "#validate_docker/status"
       - id: previous_annotation_finished
-        source: "#annotate_docker_validation_with_output/finished"
+        source: "#add_status_annots/finished"
       - id: previous_email_finished
-        source: "#email_docker_validation/finished"
+        source: "#notify_docker_status/finished"
     out: [finished]
 
   download_goldstandard:
@@ -215,7 +215,8 @@ steps:
       - id: uploaded_file_version
       - id: results
 
-  annotate_docker_upload_results:
+  add_prediction_fileid_annots:
+    doc: Add `prediction_fileid` annotation to the submission
     run: |-
       https://raw.githubusercontent.com/Sage-Bionetworks/ChallengeWorkflowTemplates/v4.1/cwl/annotate_submission.cwl
     in:
@@ -230,11 +231,11 @@ steps:
       - id: synapse_config
         source: "#synapseConfig"
       - id: previous_annotation_finished
-        source: "#annotate_docker_validation_with_output/finished"
+        source: "#add_status_annots/finished"
     out: [finished]
 
   validate:
-    doc: Validate submission
+    doc: Validate generated predictions file
     run: steps/validate.cwl
     in:
       - id: input_file
@@ -246,7 +247,7 @@ steps:
       - id: status
       - id: invalid_reasons
   
-  email_validation:
+  send_validation_results:
     doc: Send email of the validation results to the submitter
     run: |-
       https://raw.githubusercontent.com/Sage-Bionetworks/ChallengeWorkflowTemplates/v4.1/cwl/validate_email.cwl
@@ -264,10 +265,8 @@ steps:
         default: true
     out: [finished]
 
-  annotate_validation_with_output:
-    doc: >
-      Add `validation_status` and `validation_errors` annotations to the
-      submission
+  update_status_annots:
+    doc: Update `submission_status` and `submission_errors`
     run: |-
       https://raw.githubusercontent.com/Sage-Bionetworks/ChallengeWorkflowTemplates/v4.1/cwl/annotate_submission.cwl
     in:
@@ -282,7 +281,7 @@ steps:
       - id: synapse_config
         source: "#synapseConfig"
       - id: previous_annotation_finished
-        source: "#annotate_docker_upload_results/finished"
+        source: "#add_prediction_fileid_annots/finished"
     out: [finished]
 
   check_status:
@@ -296,13 +295,13 @@ steps:
       - id: status
         source: "#validate/status"
       - id: previous_annotation_finished
-        source: "#annotate_validation_with_output/finished"
+        source: "#update_status_annots/finished"
       - id: previous_email_finished
-        source: "#email_validation/finished"
+        source: "#send_validation_results/finished"
     out: [finished]
 
   score:
-    doc: Score the prediction file
+    doc: Score generated predictions file
     run: steps/score.cwl
     in:
       - id: input_file
@@ -314,7 +313,7 @@ steps:
     out:
       - id: results
       
-  email_score:
+  send_score_results:
     doc: Send email of the scores to the submitter
     run: |-
       https://raw.githubusercontent.com/Sage-Bionetworks/ChallengeWorkflowTemplates/v4.1/cwl/score_email.cwl
@@ -330,9 +329,9 @@ steps:
       #   default: []
     out: []
 
-  annotate_submission_with_output:
+  add_score_annots:
     doc: >
-      Update `validation_status` and add the scoring metric annotations
+      Update `submission_status` and add the scoring metric annotations
     run: |-
       https://raw.githubusercontent.com/Sage-Bionetworks/ChallengeWorkflowTemplates/v4.1/cwl/annotate_submission.cwl
     in:
@@ -347,6 +346,17 @@ steps:
       - id: synapse_config
         source: "#synapseConfig"
       - id: previous_annotation_finished
-        source: "#annotate_validation_with_output/finished"
+        source: "#update_status_annots/finished"
     out: [finished]
  
+s:author:
+- class: s:Person
+  s:identifier: https://orcid.org/0000-0002-5622-7998
+  s:email: verena.chung@sagebase.org
+  s:name: Verena Chung
+
+s:codeRepository: https://github.com/Sage-Bionetworks-Challenges/olfactory-mixtures-prediction
+s:license: https://spdx.org/licenses/Apache-2.0
+
+$namespaces:
+  s: https://schema.org/
