@@ -29,8 +29,8 @@ requirements:
             status = "INVALID"
             errors = "Submission should be a Docker image."
         result = {
-            "validation_status": status,
-            "validation_errors": errors
+            "submission_status": status,
+            "submission_errors": errors
         }
         with open("results.json", "w") as o:
           o.write(json.dumps(result))
@@ -50,13 +50,13 @@ outputs:
     type: string
     outputBinding:
       glob: results.json
-      outputEval: $(JSON.parse(self[0].contents)['validation_status'])
+      outputEval: $(JSON.parse(self[0].contents)['submission_status'])
       loadContents: true
   - id: invalid_reasons
     type: string
     outputBinding:
       glob: results.json
-      outputEval: $(JSON.parse(self[0].contents)['validation_errors'])
+      outputEval: $(JSON.parse(self[0].contents)['submission_errors'])
       loadContents: true
 
 baseCommand: python
