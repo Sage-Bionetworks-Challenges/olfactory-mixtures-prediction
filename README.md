@@ -1,85 +1,28 @@
-# Model-to-Data Workflow
-This repository will serve as a template for the `CWL` workflow and tools required to set up a `model-to-data` challenge infrastructure.
+# Olfactory Mixtures Predictions Evaluation Workflow
 
-For more information about the tools, refer to [ChallengeWorkflowTemplates](https://github.com/Sage-Bionetworks/ChallengeWorkflowTemplates).
+The repository contains the evaluation workflow for the
+[Olfactory Mixtures Predictions DREAM Challenge].
 
-## Workflow Steps
+## Evaluation Overview
 
-**Step** | **Description** 
---|--
-`set_submitter_folder_permissions` | Grants admin user/team `download` permissions to the Docker submission log.
-`set_admin_folder_permissions` | Grants admin user/team `download` permissions to the predictions file.
-`get_docker_submission` | Downloads the submission's Docker image.
-`get_docker_config` | Extracts the Synapse credentials and format into Docker config.
-`download_goldstandard` | Downloads the goldstandard file.
-`validate_docker` | Ensures the Docker submission image exists and <1 terabyte in size.
-`email_docker_validation` | Sends an email notification to the partipant/team of the validation results. By default, an email will only be sent if there are errors.
-`annotate_docker_validation_with_output` | Updates the submission status (`VALIDATED` if valid, else `INVALID`).
-`check_docker_status` | Checks the submission status. If the status is `INVALID`, halt the workflow.
-`run_docker` | Runs the Docker submission model.
-`upload_results` | Uploads the predictions file.
-`annotate_docker_upload_results` | Adds the `prediction_fileid` and `prediction_file_version` annotations to the submission.
-`validate` | Validates the predictions file.
-`email_validation` | Sends an email notification to the partipant/team of the validation results. By default, an email will only be sent if there are errors.
-`annotate_validation_with_output` | Updates the submission status (`VALIDATED` if valid, else `INVALID`).
-`check_status` | Checks the submission status. If the status is `INVALID`, halt the workflow.
-`score` | Scores the predictions file.
-`email_score` | Sends an email notification to the participant/team of the scoring results. By default, all scores are sent.
-`annotate_submission_with_output` | Updates the submission status (`SCORED` if successful, else `INVALID`)
+The challenge is split into two phases:
 
-## Usage
+- **Leaderboard phase**: participants submit a Docker model to generate a CSV prediction file that will be evaluated against a validation dataset. ([Sample prediction file format](https://www.synapse.org/#!Synapse:syn57406750))
 
-### Requirements
-* `pip3 install cwltool`
-* A Synapse account/configuration file.  Learn more [here](https://docs.synapse.org/articles/client_configuration.html#for-developers)
-* A Synapse Submission object ID.  Learn more [here](https://docs.synapse.org/articles/evaluation_queues.html#submissions)
+- **Final phase**: participants submit a Docker model to generate a CSV prediction file that will be evaluated against a test dataset. ([Sample prediction file format](https://www.synapse.org/#!Synapse:syn57405848))
 
+Metrics returned and used for ranking are:
 
-### Configurations
-**workflow.cwl** 
+- **Mean Root Mean Square Error (mRMSE)**: This metric measures the average difference between predicted and actual values across all data points. A lower mRMSE indicates a model with higher accuracy, as it demonstrates a smaller average error between the model's predictions and the actual outcomes.
 
-**Step** | **Description** | **Required?** | **Example**
---|--|--|--
-`set_submitter_folder_permissions` | Provide the admin user ID or admin team ID for `principalid` | Yes | `valueFrom: "3379097"`
-`set_admin_folder_permissions` | Provide the admin user ID or admin team ID for `principalid` | Yes | `valueFrom: "3379097"`
-`download_goldstandard` | Update `synapseid` to the Synapse ID of the challenge's goldstandard | Yes | `valueFrom: "syn12345678"`
-`email_docker_validation` | Set `errors_only` to `false` if an email notification about a valid submission should also be sent | No | `default: false`
-`run_docker` | Set `store` to `false` if log files should be withheld from the participants | No | `default: false`
-`run_docker` | Provide the absolute path to the data directory for `input_dir`; this directory will be mounted during the Docker submission run.  | Yes | `valueFrom: "/challenge_data"`
-`email_validation` | Set `errors_only` to `false` if an email notification about a valid submission should also be sent | No | `default: false`
-`email_score` | Add metrics and scores to `private_annotations` if they are to be withheld from the participants | No | `default: [primary_metric, primary_metric_value]`
+- **Pearson Correlation**: This metric assesses the linear relationship between the predicted and actual values. A higher Pearson correlation value signifies a strong positive relationship, indicating that the model's predictions align closely with the actual data.
 
-**validate.cwl**
+By combining these two metrics, the challenge provides a comprehensive evaluation of each model's accuracy and predictive power, ensuring that both the magnitude of the prediction errors and the consistency of the predicted trends are taken into account.
 
-**Line** | **Description** | **Required?** | **Example**
---|--|--|--
-`dockerPull: python:3.8.8-slim-buster` | Update the base image if the validation code is not Python | If code is not Python, yes | ` dockerPull: rocker/r-base:4.0.4`
-`entry: \| [validation code]` | Remove the sample validation code and replace with validation code for the Challenge | Yes | --
+Code for the above computations are available in the `evaluation` folder of the repo.
 
-* **NOTE:** expected annotations to write out are `submission_status` and `submission_errors`.
+## Evaluation Scripts
 
-**score.cwl**
+Scripts for validation and scoring are available under `./evaluation`.
 
-**Line** | **Description** | **Required?** | **Example**
---|--|--|--
-`dockerPull: python:3.8.8-slim-buster` | Update the base image if the validation code is not Python | If code is not Python, yes | ` dockerPull: rocker/r-base:4.0.4`
-`entry: \| [scoring code]` | Remove the sample scoring code and replace with scoring code for the Challenge | Yes | --
-
-* **NOTE:** expected annotations to write out are `primary_metric`, `primary_metric_value`, and `submission_status`. If there is a secondary (tie-breaking) metric, include the `secondary_metric` and `secondary_metric_value` annotations as well.
-
-
-### Example Run
-
-```bash
-cwltool workflow.cwl --submissionId 12345 \
-                     --adminUploadSynId syn123 \
-                     --submitterUploadSynId syn456 \
-                     --workflowSynapseId syn789 \
-                     --synaspeConfig ~/.synapseConfig
-```
-where:
-* `submissionId`: Submission ID to run this workflow on
-* `adminUploadSynId`: Synapse ID of Folder accessible by admin user/team
-* `submitterUploadSynId`: Synapse ID of Folder accessible by submitter
-* `workflowSynapseId`: Synapse ID of File that links to workflow archive
-* `synapseConfig`: filepath to .synapseConfig file
+[Olfactory Mixtures Predictions DREAM Challenge]: https://www.synapse.org/dreamOlfactoryMixturesPredictionChallenge
