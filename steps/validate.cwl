@@ -11,6 +11,8 @@ inputs:
   type: File
 - id: goldstandard
   type: File
+- id: entity_type
+  type: string
 
 outputs:
 - id: results
@@ -36,6 +38,8 @@ arguments:
   valueFrom: $(inputs.input_file)
 - prefix: -g
   valueFrom: $(inputs.goldstandard.path)
+- prefix: -e
+  valueFrom: $(inputs.entity_type)
 - prefix: -o
   valueFrom: results.json
 

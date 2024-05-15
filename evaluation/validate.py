@@ -23,6 +23,7 @@ def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("-p", "--predictions_file", type=str, required=True)
     parser.add_argument("-g", "--goldstandard_file", type=str, required=True)
+    parser.add_argument("-e", "--entity_type", type=str, required=True)
     parser.add_argument("-o", "--output", type=str)
     return parser.parse_args()
 
@@ -110,10 +111,14 @@ def validate(gold_file, pred_file):
 def main():
     """Main function."""
     args = get_args()
+    entity_type = args.entity_type.split(".")[-1]
 
-    invalid_reasons = validate(
-        gold_file=args.goldstandard_file, pred_file=args.predictions_file
-    )
+    if entity_type != "FileEntity":
+        invalid_reasons = [f"Submission must be a File, not {entity_type}."]
+    else:
+        invalid_reasons = validate(
+            gold_file=args.goldstandard_file, pred_file=args.predictions_file
+        )
 
     invalid_reasons = "\n".join(filter(None, invalid_reasons))
     status = "INVALID" if invalid_reasons else "VALIDATED"
