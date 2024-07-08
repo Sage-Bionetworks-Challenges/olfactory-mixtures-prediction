@@ -1,7 +1,7 @@
 #!/usr/bin/env cwl-runner
 cwlVersion: v1.0
 class: Workflow
-label: Olfactory mixtures prediction workflow
+label: Olfactory mixtures prediction workflow - Leaderboard round
 
 requirements:
   - class: StepInputExpressionRequirement
@@ -25,7 +25,7 @@ inputs:
   organizers:
     label: User or team ID for challenge organizers
     type: string
-    default: "3379097"
+    default: "3501930"
 
 outputs: []
 
