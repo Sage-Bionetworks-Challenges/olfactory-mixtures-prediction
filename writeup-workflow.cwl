@@ -40,8 +40,8 @@ steps:
         source: "#submissionId"
       - id: challengewiki
         valueFrom: "syn53470621"
-    #   - id: public
-    #     default: true
+      - id: public
+        default: true
       - id: admin
         source: "#organizers"
     out:
