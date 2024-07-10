@@ -25,7 +25,7 @@ inputs:
   organizers:
     label: User or team ID for challenge organizers
     type: string
-    default: "3501930"
+    default: "DREAM olfactory mixtures Organizers"
 
 outputs: []
 
