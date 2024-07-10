@@ -28,11 +28,11 @@ def score(gold, gold_col, pred, pred_col):
     Calculate metrics for: RMSE, Pearson
     """
     rmse = root_mean_squared_error(gold[gold_col], pred[pred_col])
-    pearson = pearsonr(gold[gold_col], pred[pred_col])
+    pearson = pearsonr(gold[gold_col], pred[pred_col]).statistic
 
     return {
         "RMSE": rmse,
-        "Pearson_correlation": pearson.statistic,
+        "Pearson_correlation": None if pd.isna(pearson) else pearson
     }
 
 
