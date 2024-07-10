@@ -68,7 +68,7 @@ steps:
       https://raw.githubusercontent.com/Sage-Bionetworks-Workflows/cwl-tool-synapseclient/v1.4/cwl/synapse-get-tool.cwl
     in:
       - id: synapseid
-        valueFrom: "syn58613337"  # TODO: update when final round begins
+        valueFrom: "syn61681058"
       - id: synapse_config
         source: "#synapseConfig"
     out:
