@@ -167,8 +167,8 @@ steps:
       - id: results
         source: "#score/results"
       # OPTIONAL: add annotations to be withheld from participants to `[]`
-      # - id: private_annotations
-      #   default: []
+      - id: private_annotations
+        default: ["RMSE", "Pearson_correlation"]
     out: []
 
   add_score_annots:
