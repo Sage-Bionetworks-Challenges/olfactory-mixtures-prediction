@@ -93,9 +93,9 @@ def validate(gold_file, pred_file):
             usecols=COLS,
             dtype=COLS,
             float_precision="round_trip",
-            index_col=INDEX,
         )
         pred = pred.map(lambda x: x.strip() if isinstance(x, str) else x)
+        pred.set_index(INDEX, inplace=True)
     except ValueError:
         errors.append(
             "Invalid prediction file headers and/or column types. "
