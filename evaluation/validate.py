@@ -84,6 +84,7 @@ def validate(gold_file, pred_file):
 
     # Replace spaces in column headers in case they're found.
     gold.columns = [colname.replace(" ", "_") for colname in gold.columns]
+    gold = gold.map(lambda x: x.strip() if isinstance(x, str) else x)
     gold.set_index(INDEX, inplace=True)
 
     try:
@@ -94,6 +95,7 @@ def validate(gold_file, pred_file):
             float_precision="round_trip",
             index_col=INDEX,
         )
+        pred = pred.map(lambda x: x.strip() if isinstance(x, str) else x)
     except ValueError:
         errors.append(
             "Invalid prediction file headers and/or column types. "

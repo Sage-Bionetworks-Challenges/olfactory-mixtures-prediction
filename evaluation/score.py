@@ -46,6 +46,10 @@ def main():
     # Replace spaces in column headers in case they're found.
     gold.columns = [colname.replace(" ", "_") for colname in gold.columns]
 
+    # Strip leading and trailing spaces as needed.
+    gold = gold.map(lambda x: x.strip() if isinstance(x, str) else x)
+    pred = pred.map(lambda x: x.strip() if isinstance(x, str) else x)
+
     scores = score(gold, "Experimental_Values", 
                    pred, "Predicted_Experimental_Values")
 
