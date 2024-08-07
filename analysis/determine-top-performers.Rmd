@@ -1,0 +1,234 @@
+---
+title: 'Bootstrap analysis: Determine Top Performers'
+author: "Sage Bionetworks"
+date: "2024-08-06"
+output:
+  html_document: default
+  pdf_document: default
+---
+  
+## Overview
+  
+In order to declare top-performers for a DREAM challenge, we need to assess if there are any "tied" methods, that is, methods that are not substantially different in performance. We determine this by using a bootstrapping (sampling with replacement) approach to determining how a submission would score in different scenarios (that is - when only considering re-sampled sets of the values to be predicted). Specifically, we sample with replacement all of the submitted predictions and the goldstandard, then score those prediction files. We repeat this for at total of 1000-10000 samples to obtain a distribution of scores for each participant. We then calculate a Bayes factor relative to the best-scoring method, to see if any of the other methods are within a certain threshold. Smaller Bayes factors indicate more similar performance while larger Bayes factors indicate more disparate performance. We use a Bayes factor of 3 as a cutoff to indicate a tie. 
+
+## Setup
+
+First, we import the packages needed for data manipulation.  Afterward, we retrieve the predictions and goldstandard files, as well as set a seed (so that the resampling results are reproducible).
+
+#### Packages
+
+```{r message=FALSE, warning=FALSE}
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(yardstick))
+suppressPackageStartupMessages(library(knitr))
+
+reticulate::use_condaenv('synapse')
+synapseclient <- reticulate::import('synapseclient')
+syn <- synapseclient$Synapse()
+syn$login(silent = TRUE)
+
+set.seed(98109)
+```
+
+#### Helper Functions
+
+Querying a Synapse table of submissions will return `submitterid` as either a user ID or team ID (so, an integer).  The following function will return a username or team name based on the ID, for easier identification and more comprehensible plotting. Additionally, `computeBayesFactor()` from the `challengescoring` package is outdated, so redefining an updated function here.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+get_name <- function(id) {
+  name <- tryCatch({
+    syn$getUserProfile(id)$userName
+  }, error = function(err) {
+    syn$getTeam(id)$name
+  })
+  name
+}
+
+computeBayesFactor <- function(bootstrapMetricMatrix,
+                               refPredIndex,
+                               invertBayes){
+  
+  M <- as.data.frame(bootstrapMetricMatrix - bootstrapMetricMatrix[,refPredIndex])
+  K <- apply(M ,2, function(x) {
+    k <- sum(x >= 0)/sum(x < 0)
+    
+    # Logic handles whether reference column is the best set of predictions.
+    if(sum(x >= 0) > sum(x < 0)){
+      return(k)
+    }else{
+      return(1/k)
+    }
+  })
+  K[refPredIndex] <- 0
+  if(invertBayes == T){K <- 1/K}
+  return(K)
+}
+```
+
+#### Goldstandard Files
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+gold <- readr::read_csv(syn$get("syn61681058")$path) %>%
+  rename_all(~stringr::str_replace_all(., "\\s+", "_"))
+head(gold)
+```
+
+#### Prediction Files
+
+Participants are allowed up to 5 scored submissions, where we will only consider the best-performing one for final evaluation. Given that a rank has already been established for each submission, we will filter for submissions that have a `final_rank`, then order them by that ranking order.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+query <- syn$tableQuery(
+  "SELECT 
+    id,
+    submitterid,
+    RMSE,
+    Pearson_correlation
+  FROM syn61909963
+  WHERE 
+    status = 'ACCEPTED' AND
+    latest_submission = true
+  ORDER BY RMSE")$asDataFrame()
+
+# Replace IDs with usernames/team names.
+query$submitterid <- as.character(query$submitterid)
+team_names <- sapply(query$submitterid, function(sub) {
+  get_name(sub)
+})
+query$submitterid <- team_names
+
+# Drop row.names for easier table reading.
+row.names(query) <- NULL
+
+kable(query)
+```
+
+## Bootstrap Submissions
+
+Next, we read in the predictions files and combine them together (with the goldstandard) into a single data frame. This will make bootstrapping easier.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+pred_filenames <- lapply(query$id, function(id) {
+  syn$getSubmission(id)$filePath
+})
+names(pred_filenames) <- team_names
+
+composite_key <- c("Dataset", "Mixture_1", "Mixture_2")
+submissions <- lapply(names(pred_filenames), function(team) {
+  
+  # Read in prediction files
+  readr::read_csv(pred_filenames[[team]], show_col_types = FALSE) %>%
+    
+    # Only consider certain columns from the prediction file
+    select(composite_key, "Predicted_Experimental_Values") %>%
+    
+    # Replace "Predicted_Experimental_Values" with the team name
+    rename(!!team := Predicted_Experimental_Values) 
+}) %>% 
+  
+  # Merge the prediction columns together
+  purrr::reduce(left_join, by=composite_key) %>%
+  
+  # Ensure that the row order follows the same order as the goldstandard
+  slice(match(c(gold$Dataset, gold$Mixture_1, gold$Mixture_2), c(Dataset, Mixture_1, Mixture_2))) %>%
+  
+  # Merge in the goldstandard target values
+  left_join(gold, by=composite_key) %>%
+  
+  # Replace "Experimental_Values" with "gold" to make it more obvious
+  rename(gold = Experimental_Values)
+kable(head(submissions))
+```
+
+Now we will bootstrap the predictions and the goldstandard 10,000 times, using 10% of the test data.  This will produce a matrix of 10000 scores per submission.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+N <- 10000
+bs_indices <- matrix(1:nrow(gold), nrow(gold), N) %>%
+  apply(2, sample, replace = TRUE)
+
+sample_percentage <- 0.1
+number_of_samples <- round(nrow(gold) * sample_percentage)
+boot <- sapply(names(pred_filenames), function(team) {
+  apply(bs_indices[1:number_of_samples,], 2, function(ind) {
+    rmse_vec(submissions$gold[ind], submissions[[team]][ind])
+  })
+})
+```
+
+## Compute and Plot Bayes Factor
+
+For this analysis, we will use the top-performing model as the reference prediction. As a reminder, we will use a Bayes factor of 3 as a cutoff to indicate a tie.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+bayes <- computeBayesFactor(boot, refPredIndex = 1, invertBayes = FALSE) %>%
+  as_tibble(rownames = "submission") %>%
+  rename(bayes = value)
+print(bayes, n=23)
+```
+
+
+## Plot It All Together
+
+```{r echo=FALSE, message=FALSE}
+plot.rmse <- boot %>%
+  as_tibble() %>%
+  tidyr::gather(submission, bs_score) %>%
+  left_join(bayes) %>%
+  mutate(bayes_category=case_when(
+    bayes == 0 ~ "Top Performers",
+    bayes <= 20 ~ "Bayes Factor ≤20",
+    bayes >= 20 ~ "Bayes Factor >20")) %>%
+  ggplot(aes(
+    x = forcats::fct_reorder(submission, bs_score, .fun = mean),
+    y = bs_score,
+    color = bayes_category
+  )) +
+  geom_boxplot(lwd = 1.2, fatten = 1) +
+  theme_bw() +
+  scale_color_manual(values = c(
+    "Top Performers" = "#FFBF00", 
+    'Bayes Factor ≤20' = '#219EE6', 
+    "Bayes Factor >20" = "#B6B5B3"),
+    name = NULL) +
+  coord_flip() +
+  labs(x="Team", y="Bootstrapped RMSE\n(num_iterations=10_000, random 10% sample)") +
+  theme(
+    axis.text.y.left = element_text(size = 19),
+    axis.text.x.bottom = element_text(size = 18),
+    text = element_text(size = 16),
+    legend.text = element_text(size = 19),
+    legend.position = c(0.15, 0.92),
+    legend.background = element_rect(linetype = "solid", color = "black"))
+
+plot.bayes.top <- bayes %>% 
+  mutate(bayes_category=case_when(
+    bayes == 0 ~ "Top Performer",
+    bayes <= 20 ~ "Bayes Factor ≤20",
+    bayes >= 20 ~ "Bayes Factor >20")) %>% 
+  ggplot(aes(submission, bayes, fill=bayes_category)) + 
+  geom_bar(stat='identity') + coord_flip(ylim = c(0, 20)) +
+  geom_hline(yintercept = 3, linetype = 2, lwd = 1.2) +
+  theme_classic() + 
+  scale_x_discrete(limits=names(sort(colMeans(boot)))) + 
+  scale_fill_manual(values = c(
+    "Top Performer" = "#FFBF00", 
+    'Bayes Factor ≤20' = '#219EE6', 
+    "Bayes Factor >20" = "#B6B5B3")) +
+  theme(legend.position = "none") +
+  theme(
+    text = element_text(size = 16),
+    axis.text.x.bottom = element_text(size = 18),
+    axis.title.y=element_blank(), 
+    axis.text.y=element_blank()) + 
+  labs(y="Bayes Factor\n(Top Performer=dgu_aibio)")
+
+
+ggsave(
+  file="olfactory-mixtures-prediction_BF.svg",
+  plot=gridExtra::grid.arrange(plot.rmse, plot.bayes.top, ncol = 2, widths = c(3, 1)),
+  width = 24,
+  height = 18.6
+)
+```
