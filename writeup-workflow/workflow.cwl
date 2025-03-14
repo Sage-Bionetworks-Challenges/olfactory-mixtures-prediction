@@ -49,7 +49,7 @@ steps:
       - id: status
       - id: invalid_reasons
   
-  validation_email:
+  send_validation_results:
     doc: >
         Send notifcation email to the submitter whether writeup submission
         has been accepted
@@ -68,7 +68,7 @@ steps:
       #   default: true
     out: [finished]
 
-  annotate_validation_with_output:
+  add_validation_annots:
     doc: >
       Add `submission_status` and `submission_errors` annotations to the
       submission
@@ -87,16 +87,17 @@ steps:
         source: "#synapseConfig"
     out: [finished]
 
-  check_status:
+  stop_wf_if_invalid:
+    doc: Stop the workflow if submission is not valid
     run: |-
       https://raw.githubusercontent.com/Sage-Bionetworks/ChallengeWorkflowTemplates/v4.1/cwl/check_status.cwl
     in:
       - id: status
         source: "#validate/status"
       - id: previous_annotation_finished
-        source: "#annotate_validation_with_output/finished"
+        source: "#add_validation_annots/finished"
       - id: previous_email_finished
-        source: "#validation_email/finished"
+        source: "#send_validation_results/finished"
     out: [finished]
  
   archive:
@@ -110,11 +111,11 @@ steps:
       - id: admin
         source: "#organizers"
       - id: check_validation_finished 
-        source: "#check_status/finished"
+        source: "#stop_wf_if_invalid/finished"
     out:
       - id: results
 
-  annotate_archive_with_output:
+  update_annots:
     doc: Add `writeup` annotation to the submission
     run: |-
       https://raw.githubusercontent.com/Sage-Bionetworks/ChallengeWorkflowTemplates/v4.1/cwl/annotate_submission.cwl
@@ -130,7 +131,7 @@ steps:
       - id: synapse_config
         source: "#synapseConfig"
       - id: previous_annotation_finished
-        source: "#annotate_validation_with_output/finished"
+        source: "#add_validation_annots/finished"
     out: [finished]
 
 s:author:
