@@ -1,0 +1,8 @@
+# Ignore the following directories:
+.github
+analysis/*
+writeup-workflow/*
+
+# Ignore the following files:
+.gitignore
+*.md
