@@ -91,7 +91,7 @@ def check_validation_status(filename, args):
                     "score_status": "SCORED", "score_errors": "", **scores,
                     }
             out.write(json.dumps(res))
-        print("SCORED.")
+        print("SCORED")
 
 
 def main():
