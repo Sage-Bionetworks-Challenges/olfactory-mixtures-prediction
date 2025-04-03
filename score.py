@@ -70,7 +70,7 @@ def check_validation_status(filename, args):
         with open(args.output, "w") as out:
             out.write(json.dumps(new_data))
 
-        print(status_result.get("validation_status"))
+        print("INVALID")
     else:
         print("Scoring the submission.")
         
