@@ -36,6 +36,7 @@ def score(gold, gold_col, pred, pred_col):
         "Pearson_correlation": None if pd.isna(pearson) else pearson
     }
 
+
 def extract_gs_file(folder):
     """Extract goldstandard file from folder."""
     files = glob(os.path.join(folder, "*"))
@@ -49,6 +50,7 @@ def extract_gs_file(folder):
             f"Got {len(files)}. Exiting."
         )
     return files[0]
+
 
 def check_validation_status(filename, args):
     """

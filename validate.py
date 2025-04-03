@@ -27,6 +27,7 @@ def get_args():
     parser.add_argument("-o", "--output", type=str, default="results.json")
     return parser.parse_args()
 
+
 def extract_gs_file(folder):
     """Extract goldstandard file from folder."""
     files = glob(os.path.join(folder, "*"))
@@ -40,6 +41,7 @@ def extract_gs_file(folder):
             f"Got {len(files)}. Exiting."
         )
     return files[0]
+
 
 def check_dups(pred):
     """Check for duplicate mixtures."""
