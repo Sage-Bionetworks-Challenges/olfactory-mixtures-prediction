@@ -24,8 +24,7 @@ def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("-p", "--predictions_file", type=str, required=True)
     parser.add_argument("-g", "--goldstandard_file", type=str, required=True)
-    #parser.add_argument("-e", "--entity_type", type=str, required=True)
-    parser.add_argument("-o", "--output", type=str)
+    parser.add_argument("-o", "--output", type=str, default="results.json")
     return parser.parse_args()
 
 def extract_gs_file(folder):
@@ -143,7 +142,7 @@ def main():
     )
 
     # print the results to a JSON file
-    with open("results.json", "w") as out:
+    with open(args.output, "w") as out:
         out.write(res)
     # print the validation status to STDOUT
     print(status)
