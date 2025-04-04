@@ -67,7 +67,7 @@ def check_validation_status(filename, args):
                     "score_status":  "INVALID",
                     "score_errors": "Submission could not be evaluated due to validation errors."}
     
-        with open(args.output, "w") as out:
+        with open(filename, "w") as out:
             out.write(json.dumps(new_data))
 
         print("INVALID")
