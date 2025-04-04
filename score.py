@@ -19,7 +19,7 @@ def get_args():
     """Set up command-line interface and get arguments."""
     parser = argparse.ArgumentParser()
     parser.add_argument("-p", "--predictions_file", type=str, required=True)
-    parser.add_argument("-g", "--goldstandard_file", type=str, required=True)
+    parser.add_argument("-g", "--goldstandard_folder", type=str, required=True)
     parser.add_argument("-o", "--output", type=str, default="results.json")
     return parser.parse_args()
 
@@ -75,7 +75,7 @@ def check_validation_status(filename, args):
         print("Scoring the submission.")
         
         pred = pd.read_csv(args.predictions_file)
-        gold = pd.read_csv(extract_gs_file(args.goldstandard_file))
+        gold = pd.read_csv(extract_gs_file(args.goldstandard_folder))
 
         # Replace spaces in column headers in case they're found.
         gold.columns = [colname.replace(" ", "_") for colname in gold.columns]
