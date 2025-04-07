@@ -59,7 +59,6 @@ def check_validation_status(filename, args):
     
     with open(filename, "r") as f:
         status_result = json.load(f)
-    print("Checking the validation_status.")
     
     if status_result.get("validation_status") == "INVALID":
         new_data = {"validation_status": "INVALID",
@@ -72,8 +71,6 @@ def check_validation_status(filename, args):
 
         print("INVALID")
     else:
-        print("Scoring the submission.")
-        
         pred = pd.read_csv(args.predictions_file)
         gold = pd.read_csv(extract_gs_file(args.goldstandard_folder))
 
