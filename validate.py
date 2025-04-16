@@ -8,8 +8,9 @@ import argparse
 from glob import glob
 import json
 import os
-import pandas as pd
 import re
+import pandas as pd
+
 
 
 def get_args():
@@ -102,30 +103,30 @@ def validate(gold_file, pred_file):
 
     # Set the column datatypes, first column: str
     # all other columns: float
-    COLS = {header[0]: str}
-    COLS.update({col: float for col in header[1:]})
+    cols = {header[0]: str}
+    cols.update({col: float for col in header[1:]})
 
     # Set the subsequent header as the columns to use
-    USECOLS = header
+    use_cols = header
 
     # Replace spaces in column headers in case they're found.
     gold.columns = [colname.replace(" ", "_") for colname in gold.columns]
     gold = gold.map(lambda x: x.strip() if isinstance(x, str) else x)
-    gold.set_index(USECOLS, inplace=True)
+    gold.set_index(use_cols, inplace=True)
 
     try:
         pred = pd.read_csv(
             pred_file,
-            usecols=USECOLS,
-            dtype=COLS,
+            usecols=use_cols,
+            dtype=cols,
             float_precision="round_trip",
         )
         pred = pred.map(lambda x: x.strip() if isinstance(x, str) else x)
-        pred.set_index(USECOLS, inplace=True)
+        pred.set_index(use_cols, inplace=True)
     except ValueError:
         errors.append(
             "Invalid prediction file headers and/or column types. "
-            f"Expecting: {str(COLS)}."
+            f"Expecting: {str(cols)}."
         )
     else:
         errors.append(check_dups(pred))
@@ -146,7 +147,6 @@ def main():
 
     invalid_reasons = "\n".join(filter(None, invalid_reasons))
     status = "INVALID" if invalid_reasons else "VALIDATED"
-    
     # Identigy words that will require variations in output truncation
     trigger_words = ["missing", "unknown"]
     pattern = r"\b(" + "|".join(map(re.escape, trigger_words)) + r")\b"
@@ -162,12 +162,11 @@ def main():
         elif any(not re.search(pattern, line) for line in lines):
             # If any line does not contain trigger words, truncate to 496 characters
             invalid_reasons = invalid_reasons[:496] + "..."
-    
     # Clean up float-heavy tuples (if present in stringified form)
     invalid_reasons = re.sub(r"\(\s*'([^']+)'(?:,.*?)*\)", r"'\1'", invalid_reasons)
-    
     res = json.dumps(
-        {"validation_status": status, "validation_errors": re.sub(r"\(\s*'([^']+)'(?:,.*?)*\)", r"'\1'", invalid_reasons)}
+        {"validation_status": status, 
+        "validation_errors": re.sub(r"\(\s*'([^']+)'(?:,.*?)*\)", r"'\1'", invalid_reasons)}
     )
 
     # print the results to a JSON file
