@@ -14,7 +14,6 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics.pairwise import cosine_distances
 from scipy.stats import pearsonr
-from scipy.stats import rankdata
 
 
 def get_args():
@@ -45,14 +44,9 @@ def evaluate_submission(pred, gold):
         pearson_scores.append(pearson_corr)
         cosine_dists.append(cosine_dist)
 
-    # Rank each scoring metric
-    pearson_rank = rankdata(pearson_scores)
-    cosine_rank = rankdata(cosine_dist)
     return {
-        "pearson_correlation": np.mean(pearson_scores), 
-        "pearson_rank": pearson_rank[0],
-        "cosine": np.mean(cosine_dists),
-        "cosine_rank": cosine_rank[0]
+        "pearson_correlation": np.mean(pearson_scores),
+        "cosine": np.mean(cosine_dists)
     }
 
 
