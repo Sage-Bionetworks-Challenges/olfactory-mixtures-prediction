@@ -1,22 +1,16 @@
 #!/usr/bin/env python3
 """Validate prediction file.
 
-Prediction file should be a 4-col CSV file.
+Prediction file should be a 54-col CSV file.
 """
 
 import argparse
 from glob import glob
 import json
 import os
+import re
 import pandas as pd
 
-INDEX = ["Dataset", "Mixture_1", "Mixture_2"]
-COLS = {
-    "Dataset": str,
-    "Mixture_1": int,
-    "Mixture_2": int,
-    "Predicted_Experimental_Values": float,
-}
 
 
 def get_args():
@@ -76,19 +70,22 @@ def check_unknown_mixtures(gold, pred):
     return ""
 
 
-def check_nan_values(pred, col):
+def check_nan_values(pred):
     """Check for NAN predictions."""
-    missing_probs = pred[col].isna().sum()
-    if missing_probs:
-        return f"'{col}' column contains {missing_probs} NaN value(s)."
+    # Check if all values are NaN.
+    if pred.isna().all().all():
+        return "All columns contain NaN values."
+
     return ""
 
 
-def check_prob_values(pred, col):
-    """Check that probabilities are between [0, 1]."""
-    if (pred[col] < 0).any() or (pred[col] > 1).any():
-        return f"'{col}' column should be between [0, 1] inclusive."
-    return ""
+def check_prob_values(pred):
+    """Check that probabilities are between [0, 5]."""
+    issue_message = []
+    for col in pred.columns[1:]:
+        if (pred[col] < 0).any() or (pred[col] > 5).any():
+            issue_message.append(f"'{col}' column should be between [0, 5] inclusive.")
+    return "\n".join(issue_message) if issue_message else ""
 
 
 def validate(gold_file, pred_file):
@@ -96,32 +93,39 @@ def validate(gold_file, pred_file):
     errors = []
 
     gold = pd.read_csv(gold_file)
+    pred = pd.read_csv(pred_file)
+    header = pred.columns.tolist()
+
+    # Set the column datatypes, first column: str
+    # all other columns: float
+    cols = {header[0]: str}
+    cols.update({col: float for col in header[1:]})
 
     # Replace spaces in column headers in case they're found.
     gold.columns = [colname.replace(" ", "_") for colname in gold.columns]
     gold = gold.map(lambda x: x.strip() if isinstance(x, str) else x)
-    gold.set_index(INDEX, inplace=True)
+    gold.set_index(header, inplace=True)
 
     try:
         pred = pd.read_csv(
             pred_file,
-            usecols=COLS,
-            dtype=COLS,
+            usecols=header,
+            dtype=cols,
             float_precision="round_trip",
         )
         pred = pred.map(lambda x: x.strip() if isinstance(x, str) else x)
-        pred.set_index(INDEX, inplace=True)
+        pred.set_index(header, inplace=True)
     except ValueError:
         errors.append(
             "Invalid prediction file headers and/or column types. "
-            f"Expecting: {str(COLS)}."
+            f"Expecting: {str(cols)}."
         )
     else:
         errors.append(check_dups(pred))
         errors.append(check_missing_mixtures(gold, pred))
         errors.append(check_unknown_mixtures(gold, pred))
-        errors.append(check_nan_values(pred, "Predicted_Experimental_Values"))
-        errors.append(check_prob_values(pred, "Predicted_Experimental_Values"))
+        errors.append(check_nan_values(pred))
+        errors.append(check_prob_values(pred))
     return errors
 
 
@@ -135,12 +139,26 @@ def main():
 
     invalid_reasons = "\n".join(filter(None, invalid_reasons))
     status = "INVALID" if invalid_reasons else "VALIDATED"
+    # Identify words that will require variations in output truncation
+    trigger_words = ["missing", "unknown"]
+    pattern = r"\b(" + "|".join(map(re.escape, trigger_words)) + r")\b"
+
+    # Split the string into individual lines (reasons)
+    lines = invalid_reasons.splitlines()
 
     # truncate validation errors if >500 (character limit for sending email)
     if len(invalid_reasons) > 500:
-        invalid_reasons = invalid_reasons[:496] + "..."
+        if any(re.search(pattern, line) for line in lines):
+            # If any line contains trigger words, truncate to the first 3 lines
+            invalid_reasons = "\n".join(lines[:3]) + "..."
+        elif any(not re.search(pattern, line) for line in lines):
+            # If any line does not contain trigger words, truncate to 496 characters
+            invalid_reasons = invalid_reasons[:496] + "..."
+    # Clean up float-heavy tuples (if present in stringified form)
+    invalid_reasons = re.sub(r"\(\s*'([^']+)'(?:,.*?)*\)", r"'\1'", invalid_reasons)
     res = json.dumps(
-        {"validation_status": status, "validation_errors": invalid_reasons}
+        {"validation_status": status, 
+        "validation_errors": re.sub(r"\(\s*'([^']+)'(?:,.*?)*\)", r"'\1'", invalid_reasons)}
     )
 
     # print the results to a JSON file
