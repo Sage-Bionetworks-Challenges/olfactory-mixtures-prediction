@@ -72,13 +72,11 @@ def check_unknown_mixtures(gold, pred):
 
 def check_nan_values(pred):
     """Check for NAN predictions."""
-    missing_probs = []
-    # Check for NAN in all columns but the first (Stimulus)
-    for col in pred.columns[1:]:
-        missing_probs = pred[col].isna().sum()
-        if missing_probs:
-            return f"'{col}' column contains {missing_probs} NaN value(s)."
-    return "\n".join(missing_probs) if missing_probs else ""
+    # Check if all values are NaN.
+    if pred.isna().all().all():
+        return "All columns contain NaN values."
+
+    return ""
 
 
 def check_prob_values(pred):
@@ -96,33 +94,27 @@ def validate(gold_file, pred_file):
 
     gold = pd.read_csv(gold_file)
     pred = pd.read_csv(pred_file)
-
-    # Read the header to get all column names
-    with open(pred_file, 'r') as f:
-        header = f.readline().strip().split(',')
+    header = pred.columns.tolist()
 
     # Set the column datatypes, first column: str
     # all other columns: float
     cols = {header[0]: str}
     cols.update({col: float for col in header[1:]})
 
-    # Set the subsequent header as the columns to use
-    use_cols = header
-
     # Replace spaces in column headers in case they're found.
     gold.columns = [colname.replace(" ", "_") for colname in gold.columns]
     gold = gold.map(lambda x: x.strip() if isinstance(x, str) else x)
-    gold.set_index(use_cols, inplace=True)
+    gold.set_index(header, inplace=True)
 
     try:
         pred = pd.read_csv(
             pred_file,
-            usecols=use_cols,
+            usecols=header,
             dtype=cols,
             float_precision="round_trip",
         )
         pred = pred.map(lambda x: x.strip() if isinstance(x, str) else x)
-        pred.set_index(use_cols, inplace=True)
+        pred.set_index(header, inplace=True)
     except ValueError:
         errors.append(
             "Invalid prediction file headers and/or column types. "
@@ -147,7 +139,7 @@ def main():
 
     invalid_reasons = "\n".join(filter(None, invalid_reasons))
     status = "INVALID" if invalid_reasons else "VALIDATED"
-    # Identigy words that will require variations in output truncation
+    # Identify words that will require variations in output truncation
     trigger_words = ["missing", "unknown"]
     pattern = r"\b(" + "|".join(map(re.escape, trigger_words)) + r")\b"
 
