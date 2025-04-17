@@ -10,8 +10,9 @@ import argparse
 from glob import glob
 import json
 import os
+import numpy as np
 import pandas as pd
-from sklearn.metrics import root_mean_squared_error
+from sklearn.metrics.pairwise import cosine_distances
 from scipy.stats import pearsonr
 
 
@@ -24,16 +25,28 @@ def get_args():
     return parser.parse_args()
 
 
-def score(gold, gold_col, pred, pred_col):
-    """
-    Calculate metrics for: RMSE, Pearson
-    """
-    rmse = root_mean_squared_error(gold[gold_col], pred[pred_col])
-    pearson = pearsonr(gold[gold_col], pred[pred_col]).statistic
+def evaluate_submission(pred, gold):
+    """Rank and calculate average Pearson correlation and cosine distance."""
+    pred_df = pd.read_csv(pred).sort_values("stimulus").reset_index(drop=True)
+    gold_df = pd.read_csv(gold).sort_values("stimulus").reset_index(drop=True)
+    feature_cols = pred_df.columns.difference(["stimulus"])
+
+    pearson_scores = []
+    cosine_dists = []
+
+    for i in range(len(pred_df)):
+        pred_vector = pred_df.loc[i, feature_cols].values
+        true_vector = gold_df.loc[i, feature_cols].values
+
+        pearson_corr, _ = pearsonr(pred_vector, true_vector)
+        cosine_dist = cosine_distances([pred_vector], [true_vector])[0, 0]
+
+        pearson_scores.append(pearson_corr)
+        cosine_dists.append(cosine_dist)
 
     return {
-        "RMSE": rmse,
-        "Pearson_correlation": None if pd.isna(pearson) else pearson
+        "pearson_correlation": np.mean(pearson_scores),
+        "cosine": np.mean(cosine_dists)
     }
 
 
@@ -56,39 +69,26 @@ def check_validation_status(filename, args):
     """
     Determine whether the validate.py script successfully validated the data.
     """
-    
     with open(filename, "r") as f:
         status_result = json.load(f)
-    
     if status_result.get("validation_status") == "INVALID":
         new_data = {"validation_status": "INVALID",
                     "validation_errors": status_result.get("validation_errors"),
                     "score_status":  "INVALID",
                     "score_errors": "Submission could not be evaluated due to validation errors."}
-    
         with open(filename, "w") as out:
             out.write(json.dumps(new_data))
 
         print("INVALID")
     else:
-        pred = pd.read_csv(args.predictions_file)
-        gold = pd.read_csv(extract_gs_file(args.goldstandard_folder))
-
-        # Replace spaces in column headers in case they're found.
-        gold.columns = [colname.replace(" ", "_") for colname in gold.columns]
-
-        # Strip leading and trailing spaces as needed.
-        gold = gold.map(lambda x: x.strip() if isinstance(x, str) else x)
-        pred = pred.map(lambda x: x.strip() if isinstance(x, str) else x)
-
-        scores = score(gold, "Experimental_Values",
-                        pred, "Predicted_Experimental_Values")
-        
+        scores = evaluate_submission(
+            args.predictions_file, extract_gs_file(args.goldstandard_folder)
+            )
         with open(args.output, "w") as out:
             res = {"validation_status": status_result.get("validation_status"),
                     "validation_errors": status_result.get("validation_errors"),
-                    "score_status": "SCORED", "score_errors": "", **scores,
-                    }
+                    "score_status": "SCORED", "score_errors": "", **scores
+                   }
             out.write(json.dumps(res))
         print("SCORED")
 
