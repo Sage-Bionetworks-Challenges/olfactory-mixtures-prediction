@@ -22,7 +22,7 @@ def get_args():
     parser.add_argument("-p", "--predictions_file", type=str, required=True)
     parser.add_argument("-g", "--goldstandard_folder", type=str, required=True)
     parser.add_argument("-o", "--output", type=str, default="results.json")
-    parser.add_argument("-t", "--task", type=str, default="task1")
+    parser.add_argument("-t", "--task", type=int, default=1)
     return parser.parse_args()
 
 
