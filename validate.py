@@ -102,9 +102,6 @@ def validate(gold_file, pred_file):
     cols = {header[0]: str}
     cols.update({col: float for col in header[1:]})
 
-    # Replace spaces in column headers in case they're found.
-    gold.columns = [colname.replace(" ", "_") for colname in gold.columns]
-    gold = gold.map(lambda x: x.strip() if isinstance(x, str) else x)
     gold.set_index(header, inplace=True)
 
     try:
@@ -114,7 +111,6 @@ def validate(gold_file, pred_file):
             dtype=cols,
             float_precision="round_trip",
         )
-        pred = pred.map(lambda x: x.strip() if isinstance(x, str) else x)
         pred.set_index(header, inplace=True)
     except ValueError:
         errors.append(
