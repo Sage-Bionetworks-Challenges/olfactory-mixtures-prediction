@@ -73,12 +73,12 @@ def check_unknown_ids(gold, pred):
     return ""
 
 
-def check_nan_values(pred):
+def check_pred_values(pred):
     """Check for NAN predictions."""
     # Check if all values are NaN.
     if pred.isna().all().all():
         return "All columns contain NaN values."
-    return ""
+    return check_values_range(pred)
 
 
 def check_values_range(pred):
@@ -114,8 +114,7 @@ def validate(gold_file, pred_file):
         errors.append(check_dups(pred))
         errors.append(check_missing_ids(gold, pred))
         errors.append(check_unknown_ids(gold, pred))
-        errors.append(check_nan_values(pred))
-        errors.append(check_prob_values(pred))
+        errors.append(check_pred_values(pred))
     return errors
 
 
