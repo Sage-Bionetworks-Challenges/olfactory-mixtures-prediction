@@ -122,12 +122,19 @@ def main():
     """Main function."""
     args = get_args()
 
-    invalid_reasons = validate(
-        gold_file=extract_gs_file(args.goldstandard_folder), pred_file=args.predictions_file
+    if "INVALID" in args.predictions_file:
+        with open(args.predictions_file, encoding="utf-8") as f:
+            errors = [f.read()]
+    else:
+
+        errors = validate(
+            gold_file=extract_gs_file(args.goldstandard_folder),
+            pred_file=args.predictions_file,
         )
 
-    invalid_reasons = "\n".join(filter(None, invalid_reasons))
+    invalid_reasons = "\n".join(filter(None, errors))
     status = "INVALID" if invalid_reasons else "VALIDATED"
+
     # Identify words that will require variations in output truncation
     trigger_words = ["missing", "unknown"]
     pattern = r"\b(" + "|".join(map(re.escape, trigger_words)) + r")\b"
@@ -143,11 +150,16 @@ def main():
         elif any(not re.search(pattern, line) for line in lines):
             # If any line does not contain trigger words, truncate to 496 characters
             invalid_reasons = invalid_reasons[:496] + "..."
+
     # Clean up float-heavy tuples (if present in stringified form)
     invalid_reasons = re.sub(r"\(\s*'([^']+)'(?:,.*?)*\)", r"'\1'", invalid_reasons)
     res = json.dumps(
-        {"validation_status": status, 
-        "validation_errors": re.sub(r"\(\s*'([^']+)'(?:,.*?)*\)", r"'\1'", invalid_reasons)}
+        {
+            "validation_status": status,
+            "validation_errors": re.sub(
+                r"\(\s*'([^']+)'(?:,.*?)*\)", r"'\1'", invalid_reasons
+            ),
+        }
     )
 
     # print the results to a JSON file
