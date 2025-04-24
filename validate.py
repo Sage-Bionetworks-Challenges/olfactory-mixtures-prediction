@@ -5,12 +5,14 @@ Prediction file should be a 54-col CSV file.
 """
 
 import argparse
-from glob import glob
 import json
 import os
 import re
+from glob import glob
+
 import pandas as pd
 
+INDEX_COL = "stimulus"
 
 
 def get_args():
@@ -93,25 +95,18 @@ def validate(gold_file, pred_file):
     """Validate predictions file against goldstandard."""
     errors = []
 
-    gold = pd.read_csv(gold_file)
-    pred = pd.read_csv(pred_file)
-    header = pred.columns.tolist()
-
-    # Set the column datatypes, first column: str
-    # all other columns: float
-    cols = {header[0]: str}
-    cols.update({col: float for col in header[1:]})
-
-    gold.set_index(header, inplace=True)
+    gold = pd.read_csv(gold_file).set_index(INDEX_COL)
+    expected_cols = (
+        gold.reset_index().drop(["Intensity", "Pleasantness"], axis=1).dtypes.to_dict()
+    )
 
     try:
         pred = pd.read_csv(
             pred_file,
-            usecols=header,
-            dtype=cols,
+            usecols=expected_cols,
+            dtype=expected_cols,
             float_precision="round_trip",
-        )
-        pred.set_index(header, inplace=True)
+        ).set_index(INDEX_COL)
     except ValueError:
         errors.append(
             "Invalid prediction file headers and/or column types. "
