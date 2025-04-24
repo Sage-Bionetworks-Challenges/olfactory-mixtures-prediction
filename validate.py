@@ -76,7 +76,7 @@ def check_unknown_ids(gold, pred):
 def check_nan_values(pred):
     """Check for NAN predictions."""
     # Check if all values are NaN.
-    if pred.isna().all().all() is True:
+    if pred.isna().all().all():
         return "All columns contain NaN values."
     return ""
 
