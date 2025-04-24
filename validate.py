@@ -30,7 +30,7 @@ def extract_gs_file(folder):
     files = glob(os.path.join(folder, "*"))
 
     # Filter out the manifest file
-    files = [f for f in files if os.path.basename(f) != 'SYNAPSE_METADATA_MANIFEST.tsv']
+    files = [f for f in files if os.path.basename(f) != "SYNAPSE_METADATA_MANIFEST.tsv"]
 
     if len(files) != 1:
         raise ValueError(
@@ -78,7 +78,6 @@ def check_nan_values(pred):
     # Check if all values are NaN.
     if pred.isna().all().all() is True:
         return "All columns contain NaN values."
-
     return ""
 
 
@@ -159,6 +158,7 @@ def main():
         out.write(res)
     # print the validation status to STDOUT
     print(status)
+
 
 if __name__ == "__main__":
     main()
