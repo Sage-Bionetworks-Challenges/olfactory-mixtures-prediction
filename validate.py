@@ -81,13 +81,11 @@ def check_nan_values(pred):
     return ""
 
 
-def check_prob_values(pred):
-    """Check that probabilities are between [0, 5]."""
-    issue_message = []
-    for col in pred.columns[1:]:
-        if (pred[col] < 0).any() or (pred[col] > 5).any():
-            issue_message.append(f"'{col}' column should be between [0, 5] inclusive.")
-    return "\n".join(issue_message) if issue_message else ""
+def check_values_range(pred):
+    """Check that prediction values are between [0, 5]."""
+    if pred.apply(lambda col: col[~col.isna()].between(0, 5), axis=1).all().all():
+        return ""
+    return "All prediction values should be between [0, 5]"
 
 
 def validate(gold_file, pred_file):
