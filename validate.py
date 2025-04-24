@@ -119,7 +119,8 @@ def validate(gold_file, pred_file):
     except ValueError:
         errors.append(
             "Invalid prediction file headers and/or column types. "
-            f"Expecting: {str(cols)}."
+            "Expecting `stimulus` (str) and 51 semantic descriptors (float). "
+            "See the Task 1 - Data page for more details."
         )
     else:
         errors.append(check_dups(pred))
