@@ -41,33 +41,33 @@ def extract_gs_file(folder):
 
 
 def check_dups(pred):
-    """Check for duplicate mixtures."""
+    """Check for duplicate IDs."""
     duplicates = pred.index.duplicated()
     if duplicates.any():
         return (
-            f"Found {duplicates.sum()} duplicate mixture(s): "
+            f"Found {duplicates.sum()} duplicate stimulus ID(s): "
             f"{pred[duplicates].index.to_list()}"
         )
     return ""
 
 
-def check_missing_mixtures(gold, pred):
-    """Check for missing mixtures."""
+def check_missing_ids(gold, pred):
+    """Check for missing IDs."""
     missing_ids = gold.index.difference(pred.index)
     if len(missing_ids) > 0:
         return (
-            f"Found {missing_ids.shape[0]} missing mixture(s): "
+            f"Found {missing_ids.shape[0]} missing stimulus ID(s): "
             f"{missing_ids.to_list()}"
         )
     return ""
 
 
-def check_unknown_mixtures(gold, pred):
-    """Check for unknown mixtures."""
+def check_unknown_ids(gold, pred):
+    """Check for unknown IDs."""
     unknown_ids = pred.index.difference(gold.index)
     if len(unknown_ids) > 0:
         return (
-            f"Found {unknown_ids.shape[0]} unknown mixture(s): "
+            f"Found {unknown_ids.shape[0]} unknown stimulus ID(s): "
             f"{unknown_ids.to_list()}"
         )
     return ""
@@ -114,8 +114,8 @@ def validate(gold_file, pred_file):
         )
     else:
         errors.append(check_dups(pred))
-        errors.append(check_missing_mixtures(gold, pred))
-        errors.append(check_unknown_mixtures(gold, pred))
+        errors.append(check_missing_ids(gold, pred))
+        errors.append(check_unknown_ids(gold, pred))
         errors.append(check_nan_values(pred))
         errors.append(check_prob_values(pred))
     return errors
