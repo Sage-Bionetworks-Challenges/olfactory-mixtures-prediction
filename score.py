@@ -39,7 +39,7 @@ def evaluate_submission(pred, gold):
         pred_vector = pred_df.loc[i, feature_cols].values
         true_vector = gold_df.loc[i, feature_cols].values
 
-        pearson_corr, _ = pearsonr(pred_vector, true_vector)
+        pearson_corr, _ = pearsonr(pred_vector.astype(float), true_vector.astype(float))
         cosine_dist = cosine_distances([pred_vector], [true_vector])[0, 0]
 
         pearson_scores.append(pearson_corr)
