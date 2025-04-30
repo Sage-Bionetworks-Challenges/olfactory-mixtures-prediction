@@ -69,29 +69,46 @@ def extract_gs_file(folder):
 def check_validation_status(filename, args):
     """
     Determine whether the validate.py script successfully validated the data.
+    Stop scoring if previous validations fail or if there is a scoring error.
     """
     with open(filename, "r") as f:
         status_result = json.load(f)
-    if status_result.get("validation_status") == "INVALID":
-        new_data = {"validation_status": "INVALID",
-                    "validation_errors": status_result.get("validation_errors"),
-                    "score_status":  "INVALID",
-                    "score_errors": "Submission could not be evaluated due to validation errors."}
-        with open(filename, "w") as out:
-            out.write(json.dumps(new_data))
 
-        print("INVALID")
+    # Initialize the result dictionary
+    res = {
+        "validation_status": status_result.get("validation_status"),
+        "validation_errors": status_result.get("validation_errors"),
+    }
+
+    if status_result.get("validation_status") == "INVALID":
+        status = status_result.get("validation_status")
+        errors = "Validation failed. Submission not scored."
+        scores = {}
     else:
-        scores = evaluate_submission(
+        try:
+            scores = evaluate_submission(
             args.predictions_file, extract_gs_file(args.goldstandard_folder)
             )
-        with open(args.output, "w") as out:
-            res = {"validation_status": status_result.get("validation_status"),
-                    "validation_errors": status_result.get("validation_errors"),
-                    "score_status": "SCORED", "score_errors": "", **scores
-                   }
-            out.write(json.dumps(res))
-        print("SCORED")
+            status = "SCORED"
+            errors = ""
+        except ValueError:
+            status = "NOT SCORED"
+            errors = "Error encountered during scoring; submission not evaluated."
+            scores = {}
+        # To be made available once the scoring metrics decided for both tasks
+        # except KeyError:
+        #     errors = f"Invalid challenge task number specified: `{task_number}`"
+
+    # Merge the existing result dictionary with additional outputs
+    res |= {"score_status": status,
+            "score_errors": errors,
+            **scores,
+        }
+    
+    with open(args.output, "w", encoding="utf-8") as out:
+        out.write(json.dumps(res))
+
+    print(status)
 
 
 def main():
