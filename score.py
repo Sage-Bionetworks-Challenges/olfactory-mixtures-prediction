@@ -92,7 +92,7 @@ def check_validation_status(filename, args):
             status = "SCORED"
             errors = ""
         except ValueError:
-            status = "NOT SCORED"
+            status = "INVALID"
             errors = "Error encountered during scoring; submission not evaluated."
             scores = {}
         # To be made available once the scoring metrics decided for both tasks
