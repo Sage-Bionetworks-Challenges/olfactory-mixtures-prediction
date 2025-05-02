@@ -163,7 +163,7 @@ def main():
     )
 
     # print the results to a JSON file
-    with open(args.output, "w") as out:
+    with open(args.output, "w", encoding="utf-8") as out:
         out.write(res)
     # print the validation status to STDOUT
     print(status)
