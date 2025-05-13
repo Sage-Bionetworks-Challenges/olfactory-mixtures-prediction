@@ -94,7 +94,7 @@ def validate(gold_file, pred_file):
 
     gold = pd.read_csv(gold_file).set_index(INDEX_COL)
     expected_cols = (
-        gold.reset_index().drop(["Intensity", "Pleasantness"], axis=1).dtypes.to_dict()
+        gold.reset_index().dtypes.to_dict()
     )
 
     try:
@@ -108,7 +108,7 @@ def validate(gold_file, pred_file):
         errors.append(
             "Invalid prediction file headers and/or column types. "
             "Expecting `stimulus` (str) and 51 semantic descriptors (float). "
-            "See the Task 1 - Data page for more details."
+            "See the Task page for more details."
         )
     else:
         errors.append(check_dups(pred))
