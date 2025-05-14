@@ -144,12 +144,10 @@ def main():
 
     # truncate validation errors if >500 (character limit for sending email)
     if len(invalid_reasons) > 500:
-        if any(re.search(pattern, line) for line in lines):
-            # If any line contains trigger words, truncate to the first 3 lines
-            invalid_reasons = "\n".join(lines[:3]) + "..."
-        elif any(not re.search(pattern, line) for line in lines):
-            # If any line does not contain trigger words, truncate to 496 characters
-            invalid_reasons = invalid_reasons[:496] + "..."
+        # pick first 3 lines only if any line matches the pattern
+        preview = "\n".join(lines[:3]) if any(pattern.search(l) for l in lines) else invalid_reasons
+        # hard-cap to below 500 chars
+        invalid_reasons = preview[:496] + "..."
 
     # Clean up float-heavy tuples (if present in stringified form)
     invalid_reasons = re.sub(r"\(\s*'([^']+)'(?:,.*?)*\)", r"'\1'", invalid_reasons)
