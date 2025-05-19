@@ -15,6 +15,7 @@ import pandas as pd
 from sklearn.metrics.pairwise import cosine_distances
 from scipy.stats import pearsonr
 
+INDEX_COL = "stimulus"
 
 def get_args():
     """Set up command-line interface and get arguments."""
@@ -28,8 +29,16 @@ def get_args():
 
 def evaluate_submission(pred, gold):
     """Rank and calculate average Pearson correlation and cosine distance."""
-    pred_df = pd.read_csv(pred).sort_values("stimulus").reset_index(drop=True)
-    gold_df = pd.read_csv(gold).sort_values("stimulus").reset_index(drop=True)
+    gold_df = pd.read_csv(gold) 
+    expected_cols = (
+        gold_df.dtypes.to_dict() 
+    )
+    pred_df = pd.read_csv(
+        pred,
+        usecols=expected_cols,
+        dtype=expected_cols,
+        float_precision="round_trip",
+        )
     feature_cols = pred_df.columns.difference(["stimulus"])
 
     pearson_scores = []
@@ -95,9 +104,6 @@ def check_validation_status(filename, args):
             status = "INVALID"
             errors = "Error encountered during scoring; submission not evaluated."
             scores = {}
-        # To be made available once the scoring metrics decided for both tasks
-        # except KeyError:
-        #     errors = f"Invalid challenge task number specified: `{task_number}`"
 
     # Merge the existing result dictionary with additional outputs
     res |= {"score_status": status,
