@@ -29,7 +29,6 @@ def get_args():
 
 def evaluate_submission(pred, gold):
     """Rank and calculate average Pearson correlation and cosine distance."""
-    errors = []
     pearson_scores = []
     cosine_dists = []
 
@@ -67,16 +66,12 @@ def evaluate_submission(pred, gold):
             "cosine": np.mean(cosine_dists)
             }  
     else:
-        errors.append(
-            f"Number of rows in prediction file ({len(pred_df)}) "
-            f"does not match number of rows in goldstandard file ({len(gold_df)})."
-        )
+        scores = {}
         # If the number of rows is not the same, set the score_status to "INVALID"
         final_score = {
             "score_status": "INVALID",
-            "score_errors": errors,
-            "pearson_correlation": pearson_scores,
-            "cosine": cosine_dists
+            "score_errors": f"Number of rows in prediction file ({len(pred_df)}) does not match number of rows in goldstandard file ({len(gold_df)}).",
+            **scores
             }
 
     return final_score
@@ -113,20 +108,27 @@ def check_validation_status(filename, args):
 
     if status_result.get("validation_status") == "INVALID":
         scores = {}
-
         # Merge the existing result dictionary with additional outputs
         res |= {"score_status": status_result.get("validation_status"),
             "score_errors": "Validation failed. Submission not scored.",
             **scores,
             }
     else:
-        # Proceed to scoring
-        scores = evaluate_submission(
-            args.predictions_file, extract_gs_file(args.goldstandard_folder)
-            )
-        # Merge the existing result dictionary with additional outputs
-        res |= {**scores,
-            }
+        try:
+            # Proceed to scoring after confirming the columns in the prediction file file include those columns in the goldstandard file
+            scores = evaluate_submission(
+                args.predictions_file, extract_gs_file(args.goldstandard_folder)
+                )
+            # Merge the existing result dictionary with additional outputs
+            res |= {**scores,
+                }
+        except ValueError:
+            scores = {}
+            # Merge the existing result dictionary with additional outputs
+            res |= {"score_status": "INVALID",
+                "score_errors": "The prediction file does not contain the same column names as the goldstandard file.",
+                **scores,
+                }
 
     with open(args.output, "w", encoding="utf-8") as out:
         out.write(json.dumps(res))
