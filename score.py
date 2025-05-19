@@ -29,35 +29,57 @@ def get_args():
 
 def evaluate_submission(pred, gold):
     """Rank and calculate average Pearson correlation and cosine distance."""
-    gold_df = pd.read_csv(gold) 
+    errors = []
+    pearson_scores = []
+    cosine_dists = []
+
+    gold_df = pd.read_csv(gold).sort_values(INDEX_COL).reset_index(drop=True)
     expected_cols = (
-        gold_df.dtypes.to_dict() 
-    )
+        gold_df.dtypes.to_dict()
+        )
+
     pred_df = pd.read_csv(
         pred,
         usecols=expected_cols,
         dtype=expected_cols,
         float_precision="round_trip",
+        ).sort_values(INDEX_COL).reset_index(drop=True)
+
+    # Confirm the new dataframes have the same number of rows
+    if len(pred_df) == len(gold_df):
+        feature_cols = pred_df.columns.difference(["stimulus"])
+
+        for i in range(len(pred_df)):
+            pred_vector = pred_df.loc[i, feature_cols].values
+            true_vector = gold_df.loc[i, feature_cols].values
+
+            pearson_corr, _ = pearsonr(pred_vector.astype(float), true_vector.astype(float))
+            cosine_dist = cosine_distances([pred_vector], [true_vector])[0, 0]
+
+            pearson_scores.append(pearson_corr)
+            cosine_dists.append(cosine_dist)
+        
+        # Calculate the average scores
+        final_score = {
+            "score_status": "SCORED",
+            "score_errors": "",
+            "pearson_correlation": np.mean(pearson_scores),
+            "cosine": np.mean(cosine_dists)
+            }  
+    else:
+        errors.append(
+            f"Number of rows in prediction file ({len(pred_df)}) "
+            f"does not match number of rows in goldstandard file ({len(gold_df)})."
         )
-    feature_cols = pred_df.columns.difference(["stimulus"])
+        # If the number of rows is not the same, set the score_status to "INVALID"
+        final_score = {
+            "score_status": "INVALID",
+            "score_errors": errors,
+            "pearson_correlation": pearson_scores,
+            "cosine": cosine_dists
+            }
 
-    pearson_scores = []
-    cosine_dists = []
-
-    for i in range(len(pred_df)):
-        pred_vector = pred_df.loc[i, feature_cols].values
-        true_vector = gold_df.loc[i, feature_cols].values
-
-        pearson_corr, _ = pearsonr(pred_vector.astype(float), true_vector.astype(float))
-        cosine_dist = cosine_distances([pred_vector], [true_vector])[0, 0]
-
-        pearson_scores.append(pearson_corr)
-        cosine_dists.append(cosine_dist)
-
-    return {
-        "pearson_correlation": np.mean(pearson_scores),
-        "cosine": np.mean(cosine_dists)
-    }
+    return final_score
 
 
 def extract_gs_file(folder):
@@ -90,31 +112,30 @@ def check_validation_status(filename, args):
     }
 
     if status_result.get("validation_status") == "INVALID":
-        status = status_result.get("validation_status")
-        errors = "Validation failed. Submission not scored."
         scores = {}
+
+        # Merge the existing result dictionary with additional outputs
+        res |= {"score_status": status_result.get("validation_status"),
+            "score_errors": "Validation failed. Submission not scored.",
+            **scores,
+            }
     else:
-        try:
-            scores = evaluate_submission(
+        # Proceed to scoring
+        scores = evaluate_submission(
             args.predictions_file, extract_gs_file(args.goldstandard_folder)
             )
-            status = "SCORED"
-            errors = ""
-        except ValueError:
-            status = "INVALID"
-            errors = "Error encountered during scoring; submission not evaluated."
-            scores = {}
+        # Merge the existing result dictionary with additional outputs
+        res |= {**scores,
+            }
 
-    # Merge the existing result dictionary with additional outputs
-    res |= {"score_status": status,
-            "score_errors": errors,
-            **scores,
-        }
-    
     with open(args.output, "w", encoding="utf-8") as out:
         out.write(json.dumps(res))
 
-    print(status)
+    # Extract the score_status in the updated JSON
+    with open(filename, "r") as f:
+        status_result = json.load(f)
+
+    print(status_result.get("score_status"))
 
 
 def main():
