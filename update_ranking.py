@@ -23,7 +23,7 @@ def rank_submissions(syn, subview_id):
     query = (f"SELECT id, pearson_correlation, cosine, createdOn, submitterid FROM {subview_id} "
              f"WHERE score_status = 'SCORED' ")
     submissions = syn.tableQuery(query).asDataFrame()
-    submissions['pearson_rank'] = submissions['pearson'].rank(ascending=False, method="min")
+    submissions['pearson_rank'] = submissions['pearson_correlation'].rank(ascending=False, method="min")
     submissions['cosine_rank'] = submissions['cosine'].rank(ascending=True, method="min")
     submissions['current_rank'] = (submissions['pearson_rank'] + submissions['cosine_rank']) / 2
 
