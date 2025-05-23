@@ -66,12 +66,10 @@ def evaluate_submission(pred, gold):
             "cosine": np.mean(cosine_dists)
             }  
     else:
-        scores = {}
         # If the number of rows is not the same, set the score_status to "INVALID"
         final_score = {
             "score_status": "INVALID",
-            "score_errors": f"Number of rows in prediction file ({len(pred_df)}) does not match number of rows in goldstandard file ({len(gold_df)}).",
-            **scores
+            "score_errors": f"Number of rows in prediction file ({len(pred_df)}) does not match number of rows in goldstandard file ({len(gold_df)})."
             }
 
     return final_score
@@ -111,7 +109,6 @@ def check_validation_status(filename, args):
         # Merge the existing result dictionary with additional outputs
         res |= {"score_status": status_result.get("validation_status"),
             "score_errors": "Validation failed. Submission not scored.",
-            **scores,
             }
     else:
         try:
