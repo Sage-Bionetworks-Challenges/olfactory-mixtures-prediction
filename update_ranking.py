@@ -26,10 +26,6 @@ def rank_submissions(syn, subview_id):
     submissions['pearson_rank'] = submissions['pearson'].rank(ascending=False, method="min")
     submissions['cosine_rank'] = submissions['cosine'].rank(ascending=True, method="min")
     submissions['current_rank'] = (submissions['pearson_rank'] + submissions['cosine_rank']) / 2
-    submissions = submissions.sort_values(
-        by=['pearson_correlation', 'cosine'],
-        ascending=False
-    )
 
     return submissions
 
