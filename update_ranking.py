@@ -7,11 +7,6 @@ Pearson Correlation and Cosine.
 from challengeutils.annotations import update_submission_status
 from challengeutils.utils import update_single_submission_status
 import synapseclient
-import pandas as pd
-import numpy as np
-import os
-import argparse
-from evaluate_predictions import evaluate_submission
 
 
 SUBMISSION_VIEWS = {
