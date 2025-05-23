@@ -1,7 +1,8 @@
 """Update Submission Ranks.
 
-This script will rank submissions made to the Preterm Birth Prediction -
-Microbiome Challenge (syn26133770) according to AUC-ROC and AUPRC.
+This script will rank submissions made to the DREAM Olfactory Mixtures 
+Prediction Challenge 2025 - (syn64743570) according to 
+Pearson Correlation and Cosine.
 """
 from challengeutils.annotations import update_submission_status
 from challengeutils.utils import update_single_submission_status
@@ -15,12 +16,11 @@ SUBMISSION_VIEWS = {
 
 def rank_submissions(syn, subview_id):
     """
-    Get scored submissions and rank them according to AUC-ROC, followed
-    by AUPRC for tie-breakers.
+    Get scored submissions and rank them according to Pearson Correlation, followed
+    by Cosine for tie-breakers.
     """
     query = (f"SELECT id, pearson_correlation, cosine, createdOn, submitterid FROM {subview_id} "
-             f"WHERE submission_status = 'SCORED' "
-             f"AND status = 'SCORED'")
+             f"WHERE score_status = 'SCORED' ")
     submissions = syn.tableQuery(query).asDataFrame()
     submissions['rank'] = (
         submissions[['pearson_correlation', 'cosine']]
