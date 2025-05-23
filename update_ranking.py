@@ -7,6 +7,12 @@ Pearson Correlation and Cosine.
 from challengeutils.annotations import update_submission_status
 from challengeutils.utils import update_single_submission_status
 import synapseclient
+import pandas as pd
+import numpy as np
+import os
+import argparse
+from evaluate_predictions import evaluate_submission
+
 
 SUBMISSION_VIEWS = {
     "Task 1": "syn66279193",
@@ -16,18 +22,20 @@ SUBMISSION_VIEWS = {
 
 def rank_submissions(syn, subview_id):
     """
-    Get scored submissions and rank them according to Pearson Correlation, followed
-    by Cosine for tie-breakers.
+    Get scored submissions. Compute ranks for both metrics.
+    Outputs a final averaged rank and sorted leaderboard.
     """
     query = (f"SELECT id, pearson_correlation, cosine, createdOn, submitterid FROM {subview_id} "
              f"WHERE score_status = 'SCORED' ")
     submissions = syn.tableQuery(query).asDataFrame()
-    submissions['rank'] = (
-        submissions[['pearson_correlation', 'cosine']]
-        .apply(tuple, axis=1)
-        .rank(method='min', ascending=False)
-        .astype(int)
+    submissions['pearson_rank'] = submissions['pearson'].rank(ascending=False, method="min")
+    submissions['cosine_rank'] = submissions['cosine'].rank(ascending=True, method="min")
+    submissions['current_rank'] = (submissions['pearson_rank'] + submissions['cosine_rank']) / 2
+    submissions = submissions.sort_values(
+        by=['pearson_correlation', 'cosine'],
+        ascending=False
     )
+
     return submissions
 
 
