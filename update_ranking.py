@@ -25,7 +25,7 @@ def rank_submissions(syn, subview_id):
     submissions = syn.tableQuery(query).asDataFrame()
     submissions['pearson_rank'] = submissions['pearson_correlation'].rank(ascending=False, method="min")
     submissions['cosine_rank'] = submissions['cosine'].rank(ascending=True, method="min")
-    submissions['current_rank'] = (submissions['pearson_rank'] + submissions['cosine_rank']) / 2
+    submissions['final_rank'] = (submissions['pearson_rank'] + submissions['cosine_rank']) / 2
 
     return submissions
 
@@ -33,7 +33,7 @@ def rank_submissions(syn, subview_id):
 def annotate_submissions(syn, sub_df):
     """Annotate submissions with their new rank."""
     for _, row in sub_df.iterrows():
-        annots = {'current_rank': int(row['current_rank'])}
+        annots = {'current_rank': int(row['final_rank'])}
         sub_status = syn.getSubmissionStatus(row['id'])
         updated = update_single_submission_status(
             sub_status, annots, is_private=False)
