@@ -33,7 +33,7 @@ def rank_submissions(syn, subview_id):
 def annotate_submissions(syn, sub_df):
     """Annotate submissions with their new rank."""
     for _, row in sub_df.iterrows():
-        annots = {'current_rank': int(row['rank'])}
+        annots = {'current_rank': int(row['current_rank'])}
         sub_status = syn.getSubmissionStatus(row['id'])
         updated = update_single_submission_status(
             sub_status, annots, is_private=False)
