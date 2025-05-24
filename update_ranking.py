@@ -35,8 +35,8 @@ def annotate_submissions(syn, sub_df):
     for _, row in sub_df.iterrows():
         annots = {'current_rank': int(row['final_rank'])}
         sub_status = syn.getSubmissionStatus(row['id'])
-        # updated = update_single_submission_status(
-        #     sub_status, annots, is_private=False)
+        updated = update_single_submission_status(
+            sub_status, annots, is_private=False, force=True)
         updated = update_submission_status(updated, annots)
         syn.store(updated)
 
