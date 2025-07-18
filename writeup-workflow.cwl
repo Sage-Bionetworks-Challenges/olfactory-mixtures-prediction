@@ -138,6 +138,10 @@ s:author:
   s:identifier: https://orcid.org/0000-0002-5622-7998
   s:email: verena.chung@sagebase.org
   s:name: Verena Chung
+- class: s:Person
+  s:email: maria.diaz@sagebase.org
+  s:name: Maria Diaz
+
 
 s:codeRepository: https://github.com/Sage-Bionetworks-Challenges/olfactory-mixtures-prediction
 s:license: https://spdx.org/licenses/Apache-2.0
