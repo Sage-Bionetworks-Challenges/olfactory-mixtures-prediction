@@ -1,10 +1,7 @@
 #!/usr/bin/env cwl-runner
-#
-# Validate a Project (writeup) submission
-#
 cwlVersion: v1.0
 class: CommandLineTool
-baseCommand: challengeutils
+label: Validate a Project (writeup) submission
 
 hints:
   DockerRequirement:
@@ -25,6 +22,25 @@ inputs:
   - id: synapse_config
     type: File
 
+outputs:
+  - id: results
+    type: File
+    outputBinding:
+      glob: results.json
+  - id: status
+    type: string
+    outputBinding:
+      glob: results.json
+      loadContents: true
+      outputEval: $(JSON.parse(self[0].contents)['submission_status'])
+  - id: invalid_reasons
+    type: string
+    outputBinding:
+      glob: results.json
+      loadContents: true
+      outputEval: $(JSON.parse(self[0].contents)['submission_errors'])
+
+baseCommand: challengeutils
 arguments:
   - valueFrom: $(inputs.synapse_config.path)
     prefix: -c
@@ -38,22 +54,14 @@ arguments:
   - valueFrom: results.json
     prefix: --output
 
-outputs:
-  - id: results
-    type: File
-    outputBinding:
-      glob: results.json
+s:author:
+- class: s:Person
+  s:identifier: https://orcid.org/0000-0002-5622-7998
+  s:email: verena.chung@sagebase.org
+  s:name: Verena Chung
 
-  - id: status
-    type: string
-    outputBinding:
-      glob: results.json
-      loadContents: true
-      outputEval: $(JSON.parse(self[0].contents)['submission_status'])
+s:codeRepository: https://github.com/Sage-Bionetworks-Challenges/olfactory-mixtures-prediction
+s:license: https://spdx.org/licenses/Apache-2.0
 
-  - id: invalid_reasons
-    type: string
-    outputBinding:
-      glob: results.json
-      loadContents: true
-      outputEval: $(JSON.parse(self[0].contents)['submission_errors'])
+$namespaces:
+  s: https://schema.org/

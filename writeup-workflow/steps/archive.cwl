@@ -1,10 +1,7 @@
 #!/usr/bin/env cwl-runner
-#
-# Archive a Project (writeup) submission
-#
 cwlVersion: v1.0
 class: CommandLineTool
-baseCommand: challengeutils
+label: Archive a Project (writeup) submission
 
 hints:
   DockerRequirement:
@@ -23,6 +20,13 @@ inputs:
   - id: check_validation_finished
     type: boolean?
 
+outputs:
+  - id: results
+    type: File
+    outputBinding:
+      glob: results.json
+
+baseCommand: challengeutils
 arguments:
   - valueFrom: $(inputs.synapse_config.path)
     prefix: -c
@@ -32,8 +36,14 @@ arguments:
   - valueFrom: results.json
     prefix: --output
 
-outputs:
-  - id: results
-    type: File
-    outputBinding:
-      glob: results.json
+s:author:
+- class: s:Person
+  s:identifier: https://orcid.org/0000-0002-5622-7998
+  s:email: verena.chung@sagebase.org
+  s:name: Verena Chung
+
+s:codeRepository: https://github.com/Sage-Bionetworks-Challenges/olfactory-mixtures-prediction
+s:license: https://spdx.org/licenses/Apache-2.0
+
+$namespaces:
+  s: https://schema.org/
