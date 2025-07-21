@@ -25,7 +25,7 @@ inputs:
   organizers:
     label: User or team ID for challenge organizers
     type: string
-    default: "DREAM Olfactory Mixtures Prediction Challenge 2025 Organizers"
+    default: "DREAM Olfactory Mixtures Prediction Challenge 2.0 Organizers"
 
 outputs: []
 
