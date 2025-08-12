@@ -1,0 +1,1547 @@
+---
+title: 'Bootstrap analysis: Determine Top Performers'
+author: "Sage Bionetworks"
+date: "2024-08-06"
+output:
+  html_document: default
+  pdf_document: default
+---
+  
+## Overview
+  
+In order to declare top-performers for a DREAM challenge, we need to assess if there are any "tied" methods, that is, methods that are not substantially different in performance. We determine this by using a bootstrapping (sampling with replacement) approach to determining how a submission would score in different scenarios (that is - when only considering re-sampled sets of the values to be predicted). Specifically, we sample with replacement all of the submitted predictions and the goldstandard, then score those prediction files. We repeat this for at total of 1000-10000 samples to obtain a distribution of scores for each participant. We then calculate a Bayes factor relative to the best-scoring method, to see if any of the other methods are within a certain threshold. Smaller Bayes factors indicate more similar performance while larger Bayes factors indicate more disparate performance. We use a Bayes factor of 3 as a cutoff to indicate a tie. 
+
+## Setup
+
+First, we import the packages needed for data manipulation.  Afterward, we retrieve the predictions and goldstandard files, as well as set a seed (so that the resampling results are reproducible).
+
+#### Packages
+
+```{r message=FALSE, warning=FALSE}
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(yardstick))
+suppressPackageStartupMessages(library(knitr))
+
+reticulate::use_condaenv('synapseclient')
+synapseclient <- reticulate::import('synapseclient')
+syn <- synapseclient$Synapse()
+syn$login(silent = TRUE)
+
+set.seed(98109)
+```
+
+#### Helper Functions
+
+Querying a Synapse table of submissions will return `submitterid` as either a user ID or team ID (so, an integer).  The following function will return a username or team name based on the ID, for easier identification and more comprehensible plotting. Additionally, `computeBayesFactor()` from the `challengescoring` package is outdated, so redefining an updated function here.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+get_name <- function(id) {
+  name <- tryCatch({
+    syn$getUserProfile(id)$userName
+  }, error = function(err) {
+    syn$getTeam(id)$name
+  })
+  name
+}
+
+computeBayesFactor <- function(bootstrapMetricMatrix,
+                               refPredIndex,
+                               invertBayes){
+  
+  M <- as.data.frame(bootstrapMetricMatrix - bootstrapMetricMatrix[,refPredIndex])
+  K <- apply(M ,2, function(x) {
+    k <- sum(x >= 0)/sum(x < 0)
+    
+    # Logic handles whether reference column is the best set of predictions.
+    if(sum(x >= 0) > sum(x < 0)){
+      return(k)
+    }else{
+      return(1/k)
+    }
+  })
+  K[refPredIndex] <- 0
+  if(invertBayes == T){K <- 1/K}
+  return(K)
+}
+```
+
+#### Goldstandard Files
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+gold <- readr::read_csv(syn$get("syn61681058")$path) %>%
+  rename_all(~stringr::str_replace_all(., "\\s+", "_"))
+head(gold)
+```
+
+#### Prediction Files
+
+Participants are allowed up to 5 scored submissions, where we will only consider the best-performing one for final evaluation. Given that a rank has already been established for each submission, we will filter for submissions that have a `final_rank`, then order them by that ranking order.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+query <- syn$tableQuery(
+  "SELECT 
+    id,
+    submitterid,
+    RMSE,
+    Pearson_correlation
+  FROM syn61909963
+  WHERE 
+    status = 'ACCEPTED' AND
+    latest_submission = true
+  ORDER BY RMSE")$asDataFrame()
+
+# Replace IDs with usernames/team names.
+query$submitterid <- as.character(query$submitterid)
+team_names <- sapply(query$submitterid, function(sub) {
+  get_name(sub)
+})
+
+team_names <- team_names[team_names != "dgu_aibio"]
+query$submitterid <- team_names
+
+# Drop row.names for easier table reading.
+row.names(query) <- NULL
+
+kable(query)
+
+
+
+# Assuming query is your dataframe
+query <- query[query$submitterid != "dgu_aibio", ]
+
+# View the updated dataframe
+kable(query)
+```
+
+## Bootstrap Submissions
+
+Next, we read in the predictions files and combine them together (with the goldstandard) into a single data frame. This will make bootstrapping easier.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+pred_filenames <- lapply(query$id, function(id) {
+  syn$getSubmission(id)$filePath
+})
+names(pred_filenames) <- team_names
+
+composite_key <- c("Dataset", "Mixture_1", "Mixture_2")
+submissions <- lapply(names(pred_filenames), function(team) {
+  
+  # Read in prediction files
+  readr::read_csv(pred_filenames[[team]], show_col_types = FALSE) %>%
+    
+    # Only consider certain columns from the prediction file
+    select(composite_key, "Predicted_Experimental_Values") %>%
+    
+    # Replace "Predicted_Experimental_Values" with the team name
+    rename(!!team := Predicted_Experimental_Values) 
+}) %>% 
+  
+  # Merge the prediction columns together
+  purrr::reduce(left_join, by=composite_key) %>%
+  
+  # Ensure that the row order follows the same order as the goldstandard
+  slice(match(c(gold$Dataset, gold$Mixture_1, gold$Mixture_2), c(Dataset, Mixture_1, Mixture_2))) %>%
+  
+  # Merge in the goldstandard target values
+  left_join(gold, by=composite_key) %>%
+  
+  # Replace "Experimental_Values" with "gold" to make it more obvious
+  rename(gold = Experimental_Values)
+kable(head(submissions))
+```
+
+Now we will bootstrap the predictions and the goldstandard 10,000 times, using 10% of the test data.  This will produce a matrix of 10000 scores per submission.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+N <- 10000
+bs_indices <- matrix(1:nrow(gold), nrow(gold), N) %>%
+  apply(2, sample, replace = TRUE)
+
+sample_percentage <- 0.1
+number_of_samples <- round(nrow(gold) * sample_percentage)
+boot <- sapply(names(pred_filenames), function(team) {
+  apply(bs_indices[1:number_of_samples,], 2, function(ind) {
+    rmse_vec(submissions$gold[ind], submissions[[team]][ind])
+  })
+})
+```
+
+## Compute and Plot Bayes Factor
+
+For this analysis, we will use the top-performing model as the reference prediction. As a reminder, we will use a Bayes factor of 3 as a cutoff to indicate a tie.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+bayes <- computeBayesFactor(boot, refPredIndex = 1, invertBayes = FALSE) %>%
+  as_tibble(rownames = "submission") %>%
+  rename(bayes = value)
+print(bayes, n=23)
+```
+
+
+## Plot It All Together
+
+```{r echo=FALSE, message=FALSE}
+plot.rmse <- boot %>%
+  as_tibble() %>%
+  tidyr::gather(submission, bs_score) %>%
+  left_join(bayes) %>%
+  mutate(bayes_category=case_when(
+    bayes == 0 ~ "Top Performers",
+    bayes <= 20 ~ "Bayes Factor ≤20",
+    bayes >= 20 ~ "Bayes Factor >20")) %>%
+  ggplot(aes(
+    x = forcats::fct_reorder(submission, bs_score, .fun = mean),
+    y = bs_score,
+    color = bayes_category
+  )) +
+  geom_boxplot(lwd = 1.2, fatten = 1) +
+  theme_bw() +
+  scale_color_manual(values = c(
+    "Top Performers" = "#FFBF00", 
+    'Bayes Factor ≤20' = '#219EE6', 
+    "Bayes Factor >20" = "#B6B5B3"),
+    name = NULL) +
+  coord_flip() +
+  labs(x="Team", y="Bootstrapped RMSE\n(num_iterations=10_000, random 10% sample)") +
+  theme(
+    axis.text.y.left = element_text(size = 19),
+    axis.text.x.bottom = element_text(size = 18),
+    text = element_text(size = 16),
+    legend.text = element_text(size = 19),
+    legend.position = c(0.15, 0.92),
+    legend.background = element_rect(linetype = "solid", color = "black"))
+
+plot.bayes.top <- bayes %>% 
+  mutate(bayes_category=case_when(
+    bayes == 0 ~ "Top Performer",
+    bayes <= 20 ~ "Bayes Factor ≤20",
+    bayes >= 20 ~ "Bayes Factor >20")) %>% 
+  ggplot(aes(submission, bayes, fill=bayes_category)) + 
+  geom_bar(stat='identity') + coord_flip(ylim = c(0, 20)) +
+  geom_hline(yintercept = 3, linetype = 2, lwd = 1.2) +
+  theme_classic() + 
+  scale_x_discrete(limits=names(sort(colMeans(boot)))) + 
+  scale_fill_manual(values = c(
+    "Top Performer" = "#FFBF00", 
+    'Bayes Factor ≤20' = '#219EE6', 
+    "Bayes Factor >20" = "#B6B5B3")) +
+  theme(legend.position = "none") +
+  theme(
+    text = element_text(size = 16),
+    axis.text.x.bottom = element_text(size = 18),
+    axis.title.y=element_blank(), 
+    axis.text.y=element_blank()) + 
+  labs(y="Bayes Factor\n(Top Performer=dgu_aibio)")
+
+
+ggsave(
+  file="olfactory-mixtures-prediction_BF.svg",
+  plot=gridExtra::grid.arrange(plot.rmse, plot.bayes.top, ncol = 2, widths = c(3, 1)),
+  width = 24,
+  height = 18.6
+)
+
+ggsave(
+  file="olfactory-mixtures-prediction_BF.png",
+  plot=gridExtra::grid.arrange(plot.rmse, plot.bayes.top, ncol = 2, widths = c(3, 1)),
+  width = 44,
+  height = 18.6
+)
+```
+
+Bootstrap with 10% of the test data added on top: Ensure the bootstrapping procedure includes 10% of the data randomly selected, resulting in 51 data points.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Bootstrap and calculate ranks
+N <- 10000
+sample_percentage <- 0.1
+number_of_samples <- round(nrow(gold) * sample_percentage)
+
+bs_indices <- matrix(1:nrow(gold), nrow(gold), N) %>%
+  apply(2, sample, replace = TRUE)
+
+# Initialize lists to store intermediate values for debugging
+rmse_values <- list()
+pearson_values <- list()
+average_values <- list()
+
+boot <- lapply(names(pred_filenames), function(team) {
+  sapply(1:N, function(i) {
+    sample_indices <- c(bs_indices[1:number_of_samples, i], sample(1:nrow(gold), 5))
+    rmse_val <- rmse_vec(submissions$gold[sample_indices], submissions[[team]][sample_indices])
+    pearson_val <- cor(submissions$gold[sample_indices], submissions[[team]][sample_indices])
+    
+    # Store values for debugging
+    rmse_values[[team]][i] <- rmse_val
+    pearson_values[[team]][i] <- pearson_val
+    average_values[[team]][i] <- mean(c(rmse_val, pearson_val))
+    
+    return(c(rmse = rmse_val, pearson = pearson_val))
+  }, simplify = FALSE)
+})
+names(boot) <- names(pred_filenames)
+
+# Convert the boot list into a more accessible format for debugging
+boot <- lapply(boot, function(x) do.call(rbind, x))
+
+# Print RMSE, Pearson, and average values for the first iteration
+cat("\nRMSE Values (Iteration 1):\n")
+print(sapply(boot, function(x) x[1, "rmse"]))
+
+cat("\nPearson Values (Iteration 1):\n")
+print(sapply(boot, function(x) x[1, "pearson"]))
+
+cat("\nAverage of RMSE and Pearson (Iteration 1):\n")
+print(sapply(boot, function(x) mean(c(x[1, "rmse"], x[1, "pearson"]))))
+
+# Create a data frame to hold RMSE, Pearson, and average values for the first iteration
+iteration_1_df <- data.frame(
+  Team = names(boot),
+  RMSE = sapply(boot, function(x) x[1, "rmse"]),
+  Pearson = sapply(boot, function(x) x[1, "pearson"]),
+  Average = sapply(boot, function(x) mean(c(x[1, "rmse"], x[1, "pearson"])))
+)
+
+# Print the table
+cat("\nRMSE, Pearson, and Average Values (Iteration 1):\n")
+print(iteration_1_df)
+
+# Calculate ranks and average them
+average_ranks <- sapply(1:N, function(i) {
+  ranks <- sapply(boot, function(team_results) {
+    # Calculate ranks for this bootstrap
+    rmse_rank <- rank(sapply(boot, function(x) x[i, "rmse"]))
+    pearson_rank <- rank(sapply(boot, function(x) x[i, "pearson"]), ties.method = "average")
+    avg_rank <- mean(c(rmse_rank, pearson_rank))
+    avg_rank
+  })
+  rank(ranks, ties.method = "average")
+})
+
+# Average the ranks across all bootstraps
+final_ranks <- rowMeans(average_ranks)
+
+# Print final average ranks for debugging
+cat("\nFinal Average Ranks:\n")
+print(final_ranks)
+
+# Get the rank index for the top two teams
+ranked_teams <- order(final_ranks)
+
+# Calculate the Bayes Factor between the top two teams
+bayes_factor <- sum(average_ranks[ranked_teams[1], ] > average_ranks[ranked_teams[2], ]) / N
+
+# Print the Bayes Factor for debugging
+cat("\nBayes Factor between the top two teams:\n")
+print(bayes_factor)
+```
+
+```{r }
+## Bootstrap and calculate ranks try 2
+N <- 10000
+sample_percentage <- 0.1
+number_of_samples <- round(nrow(gold) * sample_percentage)
+
+bs_indices <- matrix(1:nrow(gold), nrow(gold), N) %>%
+  apply(2, sample, replace = TRUE)
+
+boot <- lapply(names(pred_filenames), function(team) {
+  sapply(1:N, function(i) {
+    sample_indices <- c(bs_indices[1:number_of_samples, i], sample(1:nrow(gold), 5))
+    rmse_val <- rmse_vec(submissions$gold[sample_indices], submissions[[team]][sample_indices])
+    pearson_val <- cor(submissions$gold[sample_indices], submissions[[team]][sample_indices])
+    return(c(rmse = rmse_val, pearson = pearson_val))
+  })
+})
+names(boot) <- names(pred_filenames)
+
+# Convert boot results into matrices for Bayes factor calculation
+rmse_matrix <- do.call(cbind, lapply(boot, function(x) sapply(x, function(y) y["rmse"])))
+pearson_matrix <- do.call(cbind, lapply(boot, function(x) sapply(x, function(y) y["pearson"])))
+
+# Compute Bayes factors based on RMSE (or you can average RMSE and Pearson if desired)
+bayes_factors <- computeBayesFactor(rmse_matrix, refPredIndex = 1, invertBayes = FALSE)
+
+# Calculate average RMSE and Pearson correlation for each team
+avg_rmse <- rowMeans(rmse_matrix)
+avg_pearson <- rowMeans(pearson_matrix)
+
+# Calculate rankings
+rmse_rank <- rank(avg_rmse, ties.method = "average")
+pearson_rank <- rank(-avg_pearson, ties.method = "average")  # Negative for Pearson as higher is better
+bayes_rank <- rank(bayes_factors, ties.method = "average")
+
+# Calculate the average rank for each team
+avg_rank <- rowMeans(cbind(rmse_rank, pearson_rank, bayes_rank))
+
+# Combine everything into a final data frame
+final_df <- data.frame(
+  Team = names(pred_filenames),
+  RMSE = avg_rmse,
+  Pearson_correlation = avg_pearson,
+  Bayes_factor = bayes_factors,
+  RMSE_rank = rmse_rank,
+  Pearson_rank = pearson_rank,
+  Bayes_rank = bayes_rank,
+  Average_rank = avg_rank
+)
+
+# Sort the final table by the average rank
+final_df <- final_df[order(final_df$Average_rank), ]
+
+# Print the final table
+cat("\nFinal Table with RMSE, Pearson, Bayes Factor, and Rankings:\n")
+print(final_df)
+```
+
+```{r bho}
+# Bootstrap and calculate ranks
+N <- 10000
+sample_percentage <- 0.1
+number_of_samples <- round(nrow(gold) * sample_percentage)
+
+bs_indices <- matrix(1:nrow(gold), nrow(gold), N) %>%
+  apply(2, sample, replace = TRUE)
+
+boot <- lapply(names(pred_filenames), function(team) {
+  sapply(1:N, function(i) {
+    sample_indices <- c(bs_indices[1:number_of_samples, i], sample(1:nrow(gold), 5))
+    rmse_val <- rmse_vec(submissions$gold[sample_indices], submissions[[team]][sample_indices])
+    pearson_val <- cor(submissions$gold[sample_indices], submissions[[team]][sample_indices])
+    return(mean(c(rmse_val, pearson_val)))  # Averaging RMSE and Pearson for ranking
+  })
+})
+names(boot) <- names(pred_filenames)
+
+# Convert boot results into a matrix for rank calculation
+rank_matrix <- do.call(cbind, boot)
+
+# Calculate the rank for each team in each bootstrap iteration
+rankings <- apply(rank_matrix, 2, rank, ties.method = "average")
+
+# Initialize a matrix to store the Bayes Factors between all pairs of teams
+num_teams <- length(names(pred_filenames))
+bayes_factors_matrix <- matrix(0, nrow = num_teams, ncol = num_teams, 
+                               dimnames = list(names(pred_filenames), names(pred_filenames)))
+
+# Calculate the Bayes Factor for each pair of teams
+for (i in 1:num_teams) {
+  for (j in 1:num_teams) {
+    if (i != j) {
+      # Count how many times team i outranks team j
+      bayes_factors_matrix[i, j] <- sum(rankings[i, ] < rankings[j, ]) / N
+    }
+  }
+}
+
+# Calculate the average Bayes Factor for each team against all other teams
+average_bayes_factors <- rowMeans(bayes_factors_matrix, na.rm = TRUE)
+
+# Calculate the average rank for each team across all bootstraps
+average_ranks <- rowMeans(rankings)
+
+# Initialize a matrix to store the Bayes Factors between all pairs of teams
+num_teams <- length(names(pred_filenames))
+bayes_factors_matrix <- matrix(0, nrow = num_teams, ncol = num_teams, 
+                               dimnames = list(names(pred_filenames), names(pred_filenames)))
+
+# Calculate the Bayes Factor for each pair of teams
+for (i in 1:num_teams) {
+  for (j in 1:num_teams) {
+    if (i != j) {
+      # Count how many times team i outranks team j
+      bayes_factors_matrix[i, j] <- sum(rankings[i, ] < rankings[j, ]) / N
+    }
+  }
+}
+
+# Calculate the average Bayes Factor for each team against all other teams
+average_bayes_factors <- rowMeans(bayes_factors_matrix, na.rm = TRUE)
+
+# Prepare the final data frame for output
+final_df <- data.frame(
+  Team = rownames(bayes_factors_matrix),
+  Average_Bayes_Factor = average_bayes_factors,
+  Rank = rank(average_ranks, ties.method = "average")
+)
+
+final_df <- as.data.frame(average_bayes_factors)
+
+# Sort the final table by the average rank
+final_df <- final_df[order(final_df$Average_Rank), ]
+
+# Print the final table
+cat("\nFinal Table with Average Rank and Bayes Factors:\n")
+print(final_df)
+
+# Optionally, you can also print the Bayes Factors matrix
+cat("\nBayes Factors Matrix (each team against each other):\n")
+print(bayes_factors_matrix)
+
+```
+
+```{r section used }
+# Bootstrap and calculate ranks
+N <- 10000
+sample_percentage <- 0.1
+number_of_samples <- round(nrow(gold) * sample_percentage)
+
+bs_indices <- matrix(1:nrow(gold), nrow(gold), N) %>%
+  apply(2, sample, replace = TRUE)
+
+boot <- lapply(names(pred_filenames), function(team) {
+  sapply(1:N, function(i) {
+    sample_indices <- c(bs_indices[1:number_of_samples, i], sample(1:nrow(gold), 5))
+    rmse_val <- rmse_vec(submissions$gold[sample_indices], submissions[[team]][sample_indices])
+    pearson_val <- cor(submissions$gold[sample_indices], submissions[[team]][sample_indices])
+    return(c(rmse = rmse_val, pearson = pearson_val))  # Return both RMSE and Pearson
+  })
+})
+names(boot) <- names(pred_filenames)
+
+# Convert boot results into matrices for RMSE and Pearson calculation
+rmse_matrix <- do.call(cbind, lapply(boot, function(x) sapply(x, function(y) y["rmse"])))
+pearson_matrix <- do.call(cbind, lapply(boot, function(x) sapply(x, function(y) y["pearson"])))
+
+# Calculate average RMSE and Pearson correlation for each team
+avg_rmse <- rowMeans(rmse_matrix)
+avg_pearson <- rowMeans(pearson_matrix)
+
+# Calculate rankings
+rmse_rank <- rank(avg_rmse, ties.method = "average")
+pearson_rank <- rank(-avg_pearson, ties.method = "average")  # Negative for Pearson as higher is better
+
+# Calculate the average ranking based on RMSE and Pearson
+avg_rank_rmse_pearson <- rowMeans(cbind(rmse_rank, pearson_rank))
+
+# Initialize a matrix to store the Bayes Factors between all pairs of teams
+num_teams <- length(names(pred_filenames))
+bayes_factors_matrix <- matrix(0, nrow = num_teams, ncol = num_teams, 
+                               dimnames = list(names(pred_filenames), names(pred_filenames)))
+
+# Calculate the Bayes Factor for each pair of teams
+for (i in 1:num_teams) {
+  for (j in 1:num_teams) {
+    if (i != j) {
+      # Count how many times team i outranks team j
+      bayes_factors_matrix[i, j] <- sum(rmse_rank[i] < rmse_rank[j]) / N
+    }
+  }
+}
+
+# Calculate the average Bayes Factor for each team against all other teams
+average_bayes_factors <- rowMeans(bayes_factors_matrix, na.rm = TRUE)
+
+# Prepare the final data frame for output
+final_df <- data.frame(
+  Team = rownames(bayes_factors_matrix),
+  RMSE = avg_rmse,
+  RMSE_ranking = rmse_rank,
+  Pearson = avg_pearson,
+  Pearson_ranking = pearson_rank,
+  Average_ranking_RSME_PEARSON = avg_rank_rmse_pearson,
+  Bayes_Factors = average_bayes_factors
+)
+
+# Sort the final table by the average RMSE and Pearson ranking
+final_df <- final_df[order(final_df$Average_ranking_RSME_PEARSON), ]
+
+# Print the final table
+cat("\nFinal Table with RMSE, RMSE_ranking, Pearson, Pearson_ranking, Average_ranking_RSME_PEARSON, and Bayes Factors:\n")
+print(final_df)
+
+# Optionally, you can also print the Bayes Factors matrix
+cat("\nBayes Factors Matrix (each team against each other):\n")
+print(bayes_factors_matrix)
+
+```
+
+```{r let's simplify}
+# Set up parameters
+N <- 10000
+sample_percentage <- 0.1
+number_of_samples <- round(nrow(gold) * sample_percentage)
+
+# Generate bootstrap indices
+bs_indices <- matrix(1:nrow(gold), nrow(gold), N) %>%
+  apply(2, sample, replace = TRUE)
+
+# Perform bootstrapping and calculate RMSE and Pearson for each team
+boot <- lapply(names(pred_filenames), function(team) {
+  sapply(1:N, function(i) {
+    sample_indices <- c(bs_indices[1:number_of_samples, i], sample(1:nrow(gold), 5))
+    mse_val <- mean((submissions$gold[sample_indices] - submissions[[team]][sample_indices])^2)
+    pearson_val <- cor(submissions$gold[sample_indices], submissions[[team]][sample_indices])
+    return(c(mse = mse_val, pearson = pearson_val))  # Return both MSE and Pearson
+  })
+})
+names(boot) <- names(pred_filenames)
+
+# Convert boot results into matrices for MSE and Pearson calculation
+mse_matrix <- do.call(cbind, lapply(boot, function(x) x["mse", ]))
+pearson_matrix <- do.call(cbind, lapply(boot, function(x) x["pearson", ]))
+
+# Calculate average MSE and Pearson correlation for each team
+avg_mse <- colMeans(mse_matrix)
+avg_pearson <- colMeans(pearson_matrix)
+
+# Calculate rankings based on the average values
+mse_rank <- rank(avg_mse, ties.method = "average")
+pearson_rank <- rank(-avg_pearson, ties.method = "average")  # Negative for Pearson as higher is better
+
+# Prepare the final data frame for output
+final_df <- data.frame(
+  Team = names(pred_filenames),
+  MSE = avg_mse,
+  MSE_ranking = mse_rank,
+  Pearson = avg_pearson,
+  Pearson_ranking = pearson_rank
+)
+
+# Sort the final table by the MSE ranking
+final_df <- final_df[order(final_df$MSE_ranking), ]
+
+# Print the final dataframe
+cat("\nFinal Table with MSE, MSE_ranking, Pearson, and Pearson_ranking after 10K bootstraps:\n")
+print(final_df)
+
+```
+
+Add BF
+```{r }
+
+# Assume final_df is already computed as shown above
+
+# Initialize a vector to store the average Bayes Factor for each team
+num_teams <- nrow(final_df)
+bayes_factors <- numeric(num_teams)
+
+# Calculate the Bayes Factor for each team against all others
+for (i in 1:num_teams) {
+  bayes_factor_sum <- 0
+  for (j in 1:num_teams) {
+    if (i != j) {
+      # Calculate the Bayes Factor for team i against team j
+      bayes_factor <- sum(final_df$MSE_ranking[i] < final_df$MSE_ranking[j]) / N
+      bayes_factor_sum <- bayes_factor_sum + bayes_factor
+    }
+  }
+  # Average Bayes Factor for team i against all others
+  bayes_factors[i] <- bayes_factor_sum / (num_teams - 1)
+}
+
+# Add the Bayes Factors as a column to final_df
+final_df$Bayes_Factor <- bayes_factors
+
+# Sort the final table by the MSE ranking (optional)
+final_df <- final_df[order(final_df$MSE_ranking), ]
+
+# Print the final dataframe
+cat("\nFinal Table with MSE, MSE_ranking, Pearson, Pearson_ranking, and Bayes Factor:\n")
+print(final_df)
+
+# Calculate the average ranking between MSE_ranking and Pearson_ranking
+final_df$Average_ranking <- rowMeans(final_df[, c("MSE_ranking", "Pearson_ranking")])
+
+# Sort the final table by the Average_ranking (optional)
+final_df <- final_df[order(final_df$Average_ranking), ]
+
+# Print the final dataframe with the new Average_ranking column
+cat("\nFinal Table with MSE, MSE_ranking, Pearson, Pearson_ranking, Bayes Factor, and Average_ranking:\n")
+final_df <- final_df[order(final_df$Average_ranking), ]
+print(final_df)
+write.csv(final_df, "final_df_ranking.csv", quote = FALSE)
+
+# Assuming final_df is your dataframe
+
+# Calculate the correlation between Average_ranking and Pearson
+correlation <- cor(final_df$Average_ranking, final_df$Pearson)
+p_value <- cor.test(final_df$Average_ranking, final_df$Pearson)$p.value
+
+# Print the correlation and p-value
+cat("Correlation between Average_ranking and Pearson:", correlation, "\n")
+cat("P-value:", p_value, "\n")
+
+# Plot the correlation
+plot(final_df$Average_ranking, final_df$Pearson, 
+     main = paste("Correlation between Average_ranking and Pearson: r =", round(correlation, 2)),
+     xlab = "Average_ranking",
+     ylab = "Pearson score",
+     pch = 19, col = "blue")
+grid()
+
+plot(final_df$Average_ranking, final_df$MSE, 
+     main = paste("Correlation between Average_ranking and MSE: r =", round(correlation, 2)),
+     xlab = "Average_ranking",
+     ylab = "MSE score",
+     pch = 19, col = "red")
+grid()
+```
+
+```{r  remove cheating teams}
+# Assume pred_filenames is a list with team names as names(pred_filenames)
+teams_to_remove <- c("dgu_aibio", "CWYK")
+teams_to_remove <- c("dgu_aibio")
+
+# Filter out the teams that cheated
+filtered_pred_filenames <- pred_filenames[!names(pred_filenames) %in% teams_to_remove]
+pred_filenames <- filtered_pred_filenames
+# Set up parameters
+N <- 10000
+sample_percentage <- 0.1
+number_of_samples <- round(nrow(gold) * sample_percentage)
+
+# Generate bootstrap indices
+bs_indices <- matrix(1:nrow(gold), nrow(gold), N) %>%
+  apply(2, sample, replace = TRUE)
+
+# Perform bootstrapping and calculate RMSE and Pearson for each team
+boot <- lapply(names(pred_filenames), function(team) {
+  sapply(1:N, function(i) {
+    sample_indices <- c(bs_indices[1:number_of_samples, i], sample(1:nrow(gold), 5))
+    mse_val <- mean((submissions$gold[sample_indices] - submissions[[team]][sample_indices])^2)
+    pearson_val <- cor(submissions$gold[sample_indices], submissions[[team]][sample_indices])
+    return(c(mse = mse_val, pearson = pearson_val))  # Return both MSE and Pearson
+  })
+})
+names(boot) <- names(pred_filenames)
+
+# Convert boot results into matrices for MSE and Pearson calculation
+mse_matrix <- do.call(cbind, lapply(boot, function(x) x["mse", ]))
+pearson_matrix <- do.call(cbind, lapply(boot, function(x) x["pearson", ]))
+
+# Calculate average MSE and Pearson correlation for each team
+avg_mse <- colMeans(mse_matrix)
+avg_pearson <- colMeans(pearson_matrix)
+
+# Calculate rankings based on the average values
+mse_rank <- rank(avg_mse, ties.method = "average")
+pearson_rank <- rank(-avg_pearson, ties.method = "average")  # Negative for Pearson as higher is better
+
+# Prepare the final data frame for output
+final_df <- data.frame(
+  Team = names(pred_filenames),
+  MSE = avg_mse,
+  MSE_ranking = mse_rank,
+  Pearson = avg_pearson,
+  Pearson_ranking = pearson_rank
+)
+
+# Sort the final table by the MSE ranking
+final_df <- final_df[order(final_df$MSE_ranking), ]
+
+# Print the final dataframe
+cat("\nFinal Table with MSE, MSE_ranking, Pearson, and Pearson_ranking after 10K bootstraps:\n")
+print(final_df)
+
+## add BF
+# Initialize a vector to store the average Bayes Factor for each team
+num_teams <- nrow(final_df)
+bayes_factors <- numeric(num_teams)
+
+# Calculate the Bayes Factor for each team against all others
+for (i in 1:num_teams) {
+  bayes_factor_sum <- 0
+  for (j in 1:num_teams) {
+    if (i != j) {
+      # Calculate the Bayes Factor for team i against team j
+      bayes_factor <- sum(final_df$MSE_ranking[i] < final_df$MSE_ranking[j]) / N
+      bayes_factor_sum <- bayes_factor_sum + bayes_factor
+    }
+  }
+  # Average Bayes Factor for team i against all others
+  bayes_factors[i] <- bayes_factor_sum / (num_teams - 1)
+}
+
+# Add the Bayes Factors as a column to final_df
+final_df$Bayes_Factor <- bayes_factors
+
+# Sort the final table by the MSE ranking (optional)
+final_df <- final_df[order(final_df$MSE_ranking), ]
+
+# Print the final dataframe
+cat("\nFinal Table with MSE, MSE_ranking, Pearson, Pearson_ranking, and Bayes Factor:\n")
+print(final_df)
+
+# Calculate the average ranking between MSE_ranking and Pearson_ranking
+final_df$Average_ranking <- rowMeans(final_df[, c("MSE_ranking", "Pearson_ranking")])
+
+# Sort the final table by the Average_ranking (optional)
+final_df <- final_df[order(final_df$Average_ranking), ]
+
+# Print the final dataframe with the new Average_ranking column
+cat("\nFinal Table with MSE, MSE_ranking, Pearson, Pearson_ranking, Bayes Factor, and Average_ranking:\n")
+final_df <- final_df[order(final_df$Average_ranking), ]
+print(final_df)
+write.csv(final_df, "final_df_ranking_removed_teams.csv", quote = FALSE)
+
+# Assuming final_df is your dataframe
+
+# Calculate the correlation between Average_ranking and Pearson
+correlation <- cor(final_df$Average_ranking, final_df$Pearson)
+p_value <- cor.test(final_df$Average_ranking, final_df$Pearson)$p.value
+
+# Print the correlation and p-value
+cat("Correlation between Average_ranking and Pearson:", correlation, "\n")
+cat("P-value:", p_value, "\n")
+
+# Plot the correlation
+plot(final_df$Average_ranking, final_df$Pearson, 
+     main = paste("Correlation between Average_ranking and Pearson: r =", round(correlation, 2)),
+     xlab = "Average_ranking",
+     ylab = "Pearson score",
+     pch = 19, col = "blue")
+grid()
+
+plot(final_df$Average_ranking, final_df$MSE, 
+     main = paste("Correlation between Average_ranking and MSE: r =", round(correlation, 2)),
+     xlab = "Average_ranking",
+     ylab = "MSE score",
+     pch = 19, col = "red")
+grid()
+
+```
+
+#### BF for top teams only
+```{r }
+# Assuming final_df contains the full dataframe with all teams
+# Filter to include only the top 3 teams
+top_teams <- c("UMich CASI", "CWYK", "ChemSenSim Lab", "belfaction")
+top_teams_df <- final_df[final_df$Team %in% top_teams,]
+
+# Initialize a matrix to store the Bayes Factors between these teams
+bayes_factors_matrix <- matrix(0, nrow = 4, ncol = 4, 
+                               dimnames = list(top_teams, top_teams))
+
+# Calculate the Bayes Factor for each pair of top teams
+for (i in 1:3) {
+  for (j in 1:3) {
+    if (i != j) {
+      # Calculate how often team i outranks team j
+      bayes_factors_matrix[i, j] <- sum(top_teams_df$Average_ranking[i] < top_teams_df$Average_ranking[j]) / 10000
+    }
+  }
+}
+
+# Prepare the Bayes Factors DataFrame for output
+bayes_factors_df <- as.data.frame(bayes_factors_matrix)
+
+# Print the Bayes Factors for the top 3 teams
+cat("Bayes Factors for UMich CASI, CWYK, and ChemSenSim Lab:\n")
+print(bayes_factors_df)
+print(format(bayes_factors_df, scientific = FALSE))
+
+```
+
+So the idea is just counting out of the 10,000 bootstrappings how many times one of the 3 teams was is ranked first (based on average ranking). Bayes factor is just that value do ESRD by 10,000. - can we calculate this for top temas? adjust the code
+
+```{r }
+# Assuming final_df contains the full dataframe with all teams
+
+# Filter to include only the top 3 teams
+top_teams <- c("UMich CASI", "CWYK", "ChemSenSim Lab")
+top_teams_df <- final_df[final_df$Team %in% top_teams,]
+
+# Initialize a vector to store the Bayes Factors for each team
+bayes_factors <- numeric(3)
+names(bayes_factors) <- top_teams
+
+# Count how many times each team is ranked first based on average ranking
+for (i in 1:3) {
+  # Simulate the bootstrapping by checking the average ranking of the team
+  # Assuming average ranking is in the column 'Average_ranking'
+  first_place_count <- sum(top_teams_df$Average_ranking[i] == min(top_teams_df$Average_ranking))
+  
+  # Calculate the Bayes Factor by dividing by 10,000
+  bayes_factors[i] <- first_place_count / 10000
+}
+
+# Convert to data frame for better readability
+bayes_factors_df <- data.frame(Team = top_teams, Bayes_Factor = bayes_factors)
+
+# Print the Bayes Factors
+cat("Bayes Factors based on first-place rankings out of 10,000 bootstraps:\n")
+print(bayes_factors_df)
+print(format(bayes_factors_df, scientific = FALSE))
+
+```
+
+
+## BF top 3 teams 
+
+```{r }
+# Assuming you have the final_df dataframe with the necessary columns
+
+# Filter to include only the top 3 teams
+top_teams <- c("UMich CASI", "CWYK", "ChemSenSim Lab")
+top_teams_df <- final_df[final_df$Team %in% top_teams,]
+
+# Initialize a vector to store the count of first-place rankings for each team
+first_place_counts <- numeric(3)
+names(first_place_counts) <- top_teams
+
+# Number of bootstraps
+N <- 10000
+
+# Simulate the bootstrapping process
+set.seed(123)  # For reproducibility
+for (i in 1:N) {
+  # Randomly shuffle the Average_ranking column
+  shuffled_rankings <- sample(top_teams_df$Average_ranking)
+  
+  # Determine which team is ranked first in this bootstrap
+  first_place_team <- top_teams[which.min(shuffled_rankings)]
+  
+  # Increment the count for the team that ranked first
+  first_place_counts[first_place_team] <- first_place_counts[first_place_team] + 1
+}
+
+# Calculate the Bayes Factor by dividing the count by 10,000
+bayes_factors <- first_place_counts / N
+
+# Convert to a data frame for better readability
+bayes_factors_df <- data.frame(Team = names(bayes_factors), Bayes_Factor = bayes_factors)
+
+# Print the Bayes Factors
+cat("Bayes Factors based on first-place rankings out of 10,000 bootstraps:\n")
+print(bayes_factors_df)
+
+```
+Ramdomly add 10% of test set
+```{r }
+# Assuming you have the final_df dataframe with the necessary columns
+
+# Filter to include only the top 3 teams
+top_teams <- c("UMich CASI", "CWYK", "ChemSenSim Lab")
+#top_teams <- c("UMich CASI", "CWYK", "ChemSenSim Lab", "belfaction")
+
+top_teams_df <- final_df[final_df$Team %in% top_teams,]
+
+# Convert Average_ranking to numeric, just in case
+top_teams_df$Average_ranking <- as.numeric(top_teams_df$Average_ranking)
+
+# Initialize a vector to store the count of first-place rankings for each team
+first_place_counts <- numeric(3)
+names(first_place_counts) <- top_teams
+
+# Number of bootstraps
+N <- 10000
+
+# Proportion of the test set to add in each bootstrap (10%)
+sample_percentage <- 0.1
+
+# Simulate the bootstrapping process
+set.seed(123)  # For reproducibility
+for (i in 1:N) {
+  # Randomly select 10% of the test set
+  sample_indices <- sample(1:nrow(top_teams_df), size = round(nrow(top_teams_df) * sample_percentage), replace = TRUE)
+  
+  # Combine the sampled indices with the original test set
+  combined_indices <- c(1:nrow(top_teams_df), sample_indices)
+  
+  # Extract the subset of the data based on combined indices
+  bootstrapped_data <- top_teams_df[combined_indices, ]
+  
+  # Shuffle the Average_ranking column in the bootstrapped data
+  shuffled_rankings <- sample(bootstrapped_data$Average_ranking)
+  
+  # Check if the shuffle result is numeric and valid
+  if (!is.numeric(shuffled_rankings)) {
+    stop("Error: The shuffled rankings are not numeric.")
+  }
+  
+  # Determine which team is ranked first in this bootstrap
+  first_place_team <- top_teams[which.min(shuffled_rankings)]
+  
+  # Increment the count for the team that ranked first
+  first_place_counts[first_place_team] <- first_place_counts[first_place_team] + 1
+}
+
+# Calculate the Bayes Factor by dividing the count by 10,000
+bayes_factors <- first_place_counts / N
+
+# Convert to a data frame for better readability
+bayes_factors_df <- data.frame(Team = names(bayes_factors), Bayes_Factor = bayes_factors)
+
+# Print the Bayes Factors
+cat("Bayes Factors based on first-place rankings out of 10,000 bootstraps with 10% added test set:\n")
+print(bayes_factors_df)
+```
+
+Table
+
+```{r }
+# Assuming you have the final results data for all teams in final_df
+
+# Step 1: Update the team name CWYK to D2Smell (CWYK)
+final_df$Team <- ifelse(final_df$Team == "CWYK", "D2Smell (CWYK)", final_df$Team)
+
+# Step 2: Extract the top 4 teams (with Bayes Factors)
+top_teams <- c("UMich CASI", "D2Smell (CWYK)", "ChemSenSim Lab", "belfaction")
+top_teams_df <- final_df[final_df$Team %in% top_teams, c("Team", "Bayes_Factor")]
+
+# Add missing columns (MSE, Pearson, Average_ranking) to top_teams_df
+top_teams_df$MSE <- NA
+top_teams_df$Pearson <- NA
+top_teams_df$Average_ranking <- NA
+
+# Ensure columns are in the same order for both data frames
+top_teams_df <- top_teams_df[, c("Team", "MSE", "Pearson", "Average_ranking", "Bayes_Factor")]
+
+other_teams_df <- final_df[!(final_df$Team %in% top_teams), c("Team", "MSE", "Pearson", "Average_ranking")]
+
+other_teams_df$Bayes_Factor <- NA  # Add the missing Bayes_Factor column to other_teams_df
+
+# Ensure the columns are in the same order for both data frames
+other_teams_df <- other_teams_df[, c("Team", "MSE", "Pearson", "Average_ranking", "Bayes_Factor")]
+
+# Now you can combine the data frames using rbind
+final_results_df <- rbind(top_teams_df, other_teams_df)
+
+# Print or export the final table
+print(final_results_df)
+
+# Optionally, write the table to a CSV file for upload to Synapse
+write.csv(final_results_df, file = "challenge_final_results.csv", row.names = FALSE)
+
+# Step 3: Extract all other teams with their scores and ranks
+
+# Step 4: Combine top teams and other teams data into a final table
+final_results_df <- rbind(
+  top_teams_df,  # Top 4 teams with Bayes Factor
+  other_teams_df  # All other teams with scores and ranks
+)
+
+# Print or export the final table
+print(final_results_df)
+
+# Optionally, you can write the table to a CSV file for easy upload to Synapse
+write.csv(final_results_df, file = "challenge_final_results.csv", row.names = FALSE)
+
+# Plot the Average_ranking
+# Load necessary library
+library(dplyr)
+final_results <- final_results_df
+
+# Assuming final_results is your dataframe
+
+# Define the top 4 teams and their desired average ranking
+top_teams <- c("D2Smell (CWYK)", "UMich CASI", "belfaction", "ChemSenSim Lab")
+top_teams_ranking <- 2  # Assuming we want to set the same average ranking for these teams
+
+# Update the Average_ranking for the top 4 teams
+final_results <- final_results %>%
+  mutate(Average_ranking = ifelse(Team %in% top_teams, top_teams_ranking, Average_ranking))
+
+# View the updated dataframe
+print(final_results)
+
+# data <- read.csv("final_df_ranking_removed_teams.csv", header = TRUE)
+ggplot(final_results, aes(x = reorder(Team, Average_ranking), y = Average_ranking)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  labs(title = "Average Ranking of Teams", x = "Team", y = "Average Ranking") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
+
+# Save the plot as a JPEG file
+ggsave("average_ranking_plot.jpeg", width = 10, height = 7, dpi = 300)
+
+
+```
+
+```{r hist plot for person with SE}
+# Set up parameters
+N <- 10000
+sample_percentage <- 0.1
+number_of_samples <- round(nrow(gold) * sample_percentage)
+
+# Generate bootstrap indices
+bs_indices <- matrix(1:nrow(gold), nrow(gold), N) %>%
+  apply(2, sample, replace = TRUE)
+
+# Perform bootstrapping and calculate RMSE and Pearson for each team
+boot <- lapply(names(pred_filenames), function(team) {
+  sapply(1:N, function(i) {
+    sample_indices <- c(bs_indices[1:number_of_samples, i], sample(1:nrow(gold), 5))
+    mse_val <- mean((submissions$gold[sample_indices] - submissions[[team]][sample_indices])^2)
+    pearson_val <- cor(submissions$gold[sample_indices], submissions[[team]][sample_indices])
+    return(c(mse = mse_val, pearson = pearson_val))  # Return both MSE and Pearson
+  })
+})
+names(boot) <- names(pred_filenames)
+
+# Convert boot results into matrices for MSE and Pearson calculation
+mse_matrix <- do.call(cbind, lapply(boot, function(x) x["mse", ]))
+pearson_matrix <- do.call(cbind, lapply(boot, function(x) x["pearson", ]))
+
+# Calculate average MSE and Pearson correlation for each team
+avg_mse <- colMeans(mse_matrix)
+avg_pearson <- colMeans(pearson_matrix)
+
+# Calculate rankings based on the average values
+mse_rank <- rank(avg_mse, ties.method = "min")
+pearson_rank <- rank(-avg_pearson, ties.method = "min")  # Negative for Pearson as higher is better
+
+# # Prepare the final data frame for output
+# final_df <- data.frame(
+#   Team = names(pred_filenames),
+#   MSE = avg_mse,
+#   MSE_ranking = mse_rank,
+#   Pearson = avg_pearson,
+#   Pearson_ranking = pearson_rank
+# )
+
+# Prepare the final data frame with adjusted rankings
+final_df_adjusted <- data.frame(
+  Team = names(pred_filenames),
+  MSE = avg_mse,
+  MSE_ranking = mse_rank,
+  Pearson = avg_pearson,
+  Pearson_ranking = pearson_rank
+)
+
+# Sort the final table by the MSE ranking
+# final_df <- final_df[order(final_df$MSE_ranking), ]
+
+# Group by rank and calculate the mean and standard deviation
+final_df_adjusted <- data.frame(
+  Team = names(pred_filenames),
+  MSE = avg_mse,
+  MSE_ranking = mse_rank,
+  Pearson = avg_pearson,
+  Pearson_ranking = pearson_rank
+)
+
+# No need to group by rank, keep the team names in the dataframe
+grouped_df_adjusted <- final_df_adjusted %>%
+  group_by(Team, MSE_ranking) %>%
+  summarize(
+    avg_mse = mean(MSE),
+    avg_pearson = mean(Pearson),
+    mse_std = sd(MSE),
+    pearson_std = sd(Pearson)
+  )
+
+# Print the final dataframe
+cat("\nFinal Table with MSE, MSE_ranking, Pearson, and Pearson_ranking after 10K bootstraps:\n")
+print(grouped_df_adjusted)
+
+# ------------------------------------------
+# Additional part: Aggregation of Submissions by Rank
+# ------------------------------------------
+
+# # Group by rank and average the MSE and Pearson correlation for each rank
+# grouped_df <- final_df %>%
+#   group_by(MSE_ranking) %>%
+#   summarize(
+#     avg_mse = mean(MSE),
+#     avg_pearson = mean(Pearson),
+#     mse_std = sd(MSE),
+#     pearson_std = sd(Pearson)
+#   )
+
+# Plot the aggregated performance with error bars
+library(ggplot2)
+
+# MSE Histogram with error bars and team names on the x-axis
+ggplot(grouped_df_adjusted, aes(x = Team, y = avg_mse)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  geom_errorbar(aes(ymin = avg_mse - mse_std, ymax = avg_mse + mse_std), width = 0.2) +
+  labs(title = "Aggregated MSE by Team with Error Bars", x = "Team", y = "MSE") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+# Pearson Correlation Histogram with error bars and team names on the x-axis
+ggplot(grouped_df_adjusted, aes(x = Team, y = avg_pearson)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  geom_errorbar(aes(ymin = avg_pearson - pearson_std, ymax = avg_pearson + pearson_std), width = 0.2) +
+  labs(title = "Aggregated Pearson Correlation by Team with Error Bars", x = "Team", y = "Pearson Correlation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+
+```
+
+```{r plot times 2 - wroks for SE!}
+# Set up parameters
+N <- 10000
+sample_percentage <- 0.1
+number_of_samples <- round(nrow(gold) * sample_percentage)
+
+# Generate bootstrap indices
+bs_indices <- matrix(1:nrow(gold), nrow(gold), N) %>%
+  apply(2, sample, replace = TRUE)
+
+# Perform bootstrapping and calculate RMSE and Pearson for each team
+boot <- lapply(names(pred_filenames), function(team) {
+  sapply(1:N, function(i) {
+    sample_indices <- c(bs_indices[1:number_of_samples, i], sample(1:nrow(gold), 5))
+    mse_val <- mean((submissions$gold[sample_indices] - submissions[[team]][sample_indices])^2)
+    pearson_val <- cor(submissions$gold[sample_indices], submissions[[team]][sample_indices])
+    return(c(mse = mse_val, pearson = pearson_val))  # Return both MSE and Pearson
+  })
+})
+names(boot) <- names(pred_filenames)
+
+# Convert boot results into matrices for MSE and Pearson calculation
+mse_matrix <- do.call(cbind, lapply(boot, function(x) x["mse", ]))
+pearson_matrix <- do.call(cbind, lapply(boot, function(x) x["pearson", ]))
+
+# Calculate average MSE and Pearson correlation for each team
+avg_mse <- colMeans(mse_matrix)
+avg_pearson <- colMeans(pearson_matrix)
+
+# Calculate standard deviations (for error bars)
+mse_std <- apply(mse_matrix, 2, sd)
+pearson_std <- apply(pearson_matrix, 2, sd)
+
+# Calculate standard errors
+mse_se <- mse_std / sqrt(N)
+pearson_se <- pearson_std / sqrt(N)
+
+# Calculate rankings based on the average values
+mse_rank <- rank(avg_mse, ties.method = "average")
+pearson_rank <- rank(-avg_pearson, ties.method = "average")  # Negative for Pearson as higher is better
+
+# Prepare the final data frame with adjusted rankings
+final_df_adjusted <- data.frame(
+  Team = names(pred_filenames),
+  MSE = avg_mse,
+  MSE_ranking = mse_rank,
+  MSE_SE = mse_se,
+  Pearson = avg_pearson,
+  Pearson_ranking = pearson_rank,
+  Pearson_SE = pearson_se
+)
+
+# Print the final dataframe with standard errors
+cat("\nFinal Table with MSE, MSE_ranking, Pearson, Pearson_ranking, MSE_SE, and Pearson_SE after 10K bootstraps:\n")
+print(final_df_adjusted)
+
+# Plot the aggregated performance with error bars
+
+# Sorting and plotting by Pearson Correlation (from highest to lowest)
+ggplot(final_df_adjusted, aes(x = reorder(Team, -Pearson), y = Pearson)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  geom_errorbar(aes(ymin = Pearson - Pearson_SE, ymax = Pearson + Pearson_SE), width = 0.2) +
+  labs(title = "Aggregated Pearson Correlation by Team with Error Bars", x = "Team", y = "Pearson Correlation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+ggsave("pearson_correlation_plot.jpeg", device = "jpeg", width = 10, height = 7, dpi = 300)
+
+# Sorting and plotting by MSE (from lowest to highest)
+ggplot(final_df_adjusted, aes(x = reorder(Team, MSE), y = MSE)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  geom_errorbar(aes(ymin = MSE - MSE_SE, ymax = MSE + MSE_SE), width = 0.2) +
+  labs(title = "Aggregated MSE by Team with Error Bars", x = "Team", y = "MSE") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+ggsave("mse_plot.jpeg", device = "jpeg", width = 10, height = 7, dpi = 300)
+
+## save
+# Sorting and plotting by Pearson Correlation (from highest to lowest)
+pearson_plot <- ggplot(final_df_adjusted, aes(x = reorder(Team, -avg_pearson), y = avg_pearson)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  geom_errorbar(aes(ymin = avg_pearson - pearson_std, ymax = avg_pearson + pearson_std), width = 0.2) +
+  labs(title = "Aggregated Pearson Correlation by Team with Error Bars", x = "Team", y = "Pearson Correlation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+# Save Pearson correlation plot as JPEG
+ggsave("pearson_correlation_plot.jpeg", plot = pearson_plot, device = "jpeg", width = 10, height = 7, dpi = 300)
+
+# Sorting and plotting by MSE (from lowest to highest)
+mse_plot <- ggplot(final_df_adjusted, aes(x = reorder(Team, avg_mse), y = avg_mse)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  geom_errorbar(aes(ymin = avg_mse - mse_std, ymax = avg_mse + mse_std), width = 0.2) +
+  labs(title = "Aggregated MSE by Team with Error Bars", x = "Team", y = "MSE") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+# Save MSE plot as JPEG
+ggsave("mse_plot.jpeg", plot = mse_plot, device = "jpeg", width = 10, height = 7, dpi = 300)
+```
+
+Aggregate plot
+```{r }
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Assuming pred_filenames is a list with paths to submission files
+# Assuming the 'gold' data frame has the true values for each mixture in the test set
+
+# Initialize a data frame to store the aggregated results
+aggregated_results <- data.frame(
+  Teams = numeric(),
+  Metric = numeric(),
+  Team_Count = numeric()
+)
+
+# Calculate metrics for different aggregations of team submissions
+for (n in 2:length(pred_filenames)) {
+  
+  # Get the top n teams
+  top_teams <- names(pred_filenames)[1:n]
+  
+  # Load and combine the submissions for the top n teams
+  submission_values <- sapply(top_teams, function(team) {
+    submission <- read.csv(pred_filenames[[team]], stringsAsFactors = FALSE)
+    return(submission$Predicted_Experimental_Values)
+  })
+  
+  # Calculate the mean submission for the top n teams
+  mean_submission <- rowMeans(submission_values, na.rm = TRUE)
+  
+  # Calculate the metric (e.g., RMSE or Pearson) between the mean submission and the true values
+  rmse <- sqrt(mean((mean_submission - gold$Experimental_Values)^2))
+  pearson <- cor(mean_submission, gold$Experimental_Values)
+  
+  # Store the results in the data frame
+  aggregated_results <- rbind(aggregated_results, data.frame(
+    Teams = c("Top n Teams", "Aggregated"),
+    Metric = c(rmse, pearson),
+    Team_Count = n
+  ))
+}
+
+# Plotting the results
+ggplot(aggregated_results, aes(x = Team_Count)) +
+  geom_line(aes(y = Metric, color = Teams, group = Teams), size = 1) +
+  geom_point(aes(y = Metric, color = Teams, shape = Teams), size = 3) +
+  scale_y_continuous(name = "Metric (RMSE/Pearson)", sec.axis = sec_axis(~ ., name = "Metric (RMSE/Pearson)")) +
+  scale_x_continuous(name = "Number of Teams") +
+  theme_minimal() +
+  labs(title = "Aggregation of Teams' Metrics",
+       subtitle = "Performance of top n teams vs. aggregated teams",
+       color = "Legend", shape = "Legend") +
+  theme(legend.position = "bottom")
+
+```
+
+```{r }
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Assuming pred_filenames is a list with paths to submission files
+# Assuming the 'gold' data frame has the true values for each mixture in the test set
+
+# Initialize a data frame to store the aggregated results
+aggregated_results <- data.frame(
+  Teams = character(),
+  Metric = numeric(),
+  Value = numeric(),
+  Team_Count = numeric()
+)
+
+# Calculate metrics for different aggregations of team submissions
+for (n in 2:length(pred_filenames)) {
+  
+  # Get the top n teams
+  top_teams <- names(pred_filenames)[1:n]
+  
+  # Load and combine the submissions for the top n teams
+  submission_values <- sapply(top_teams, function(team) {
+    submission <- read.csv(pred_filenames[[team]], stringsAsFactors = FALSE)
+    return(submission$Predicted_Experimental_Values)
+  })
+  
+  # Calculate the mean submission for the top n teams
+  mean_submission <- rowMeans(submission_values, na.rm = TRUE)
+  
+  # Calculate the RMSE and Pearson metrics
+  rmse <- sqrt(mean((mean_submission - gold$Experimental_Values)^2))
+  pearson <- cor(mean_submission, gold$Experimental_Values)
+  
+  # Store the results in the data frame
+  aggregated_results <- rbind(aggregated_results, data.frame(
+    Teams = c("Top n Teams", "Top n Teams"),
+    Metric = c("RMSE", "Pearson"),
+    Value = c(rmse, pearson),
+    Team_Count = n
+  ))
+}
+
+# Plotting the results
+ggplot(aggregated_results, aes(x = Team_Count, y = Value, color = Metric)) +
+  geom_line(aes(linetype = Teams, group = interaction(Teams, Metric)), size = 1) +
+  geom_point(aes(shape = Metric), size = 3) +
+  scale_y_continuous(name = "Metric (RMSE / Pearson)", sec.axis = sec_axis(~ ., name = "Metric (RMSE / Pearson)")) +
+  scale_x_continuous(name = "Number of Teams") +
+  theme_minimal() +
+  labs(title = "Aggregation of Teams' Metrics",
+       subtitle = "Performance of top n teams vs. aggregated teams",
+       color = "Metric", shape = "Metric", linetype = "Teams") +
+  theme(legend.position = "bottom")
+
+
+```
+
+```{r }
+library(ggplot2)
+library(dplyr)
+
+# Assuming final_df is your data frame and it's ordered by the metric you want to aggregate
+# Arrange data frame by MSE ranking (smallest to largest)
+final_df <- final_df %>% arrange(MSE_ranking)
+
+# Initialize lists to store results
+mean_mse_list <- c()
+mean_pearson_list <- c()
+team_counts <- 2:nrow(final_df)
+
+# Calculate aggregated metrics for top N teams
+for (n in team_counts) {
+  # Subset data for top n teams
+  top_n_teams <- final_df[1:n, ]
+  
+  # Calculate mean MSE and Pearson
+  mean_mse <- mean(top_n_teams$MSE)
+  mean_pearson <- mean(top_n_teams$Pearson)
+  
+  # Store results
+  mean_mse_list <- c(mean_mse_list, mean_mse)
+  mean_pearson_list <- c(mean_pearson_list, mean_pearson)
+}
+
+# Create data frame for plotting
+plot_data <- data.frame(
+  Teams = team_counts,
+  Mean_MSE = mean_mse_list,
+  Mean_Pearson = mean_pearson_list
+)
+
+# Plot the results
+ggplot(plot_data, aes(x = Teams)) +
+  geom_line(aes(y = Mean_MSE), color = "red") +
+  geom_line(aes(y = Mean_Pearson), color = "black") +
+  labs(title = "Aggregated Metrics by Number of Teams",
+       x = "Number of Teams",
+       y = "Mean Value") +
+  scale_y_continuous(
+    name = "Mean MSE (red)",
+    sec.axis = sec_axis(~ . *10, name = "Mean Pearson (black)"),
+  ) +
+  theme_minimal()
+
+```
+```{r better axes for RSME}
+library(ggplot2)
+library(dplyr)
+
+# Assuming final_df is your data frame and it's ordered by the metric you want to aggregate
+# Arrange data frame by MSE ranking (smallest to largest)
+final_df <- final_df %>% arrange(MSE_ranking)
+
+# Initialize lists to store results
+mean_mse_list <- c()
+mean_pearson_list <- c()
+team_counts <- 2:nrow(final_df)
+
+# Calculate aggregated metrics for top N teams
+for (n in team_counts) {
+  # Subset data for top n teams
+  top_n_teams <- final_df[1:n, ]
+  
+  # Calculate mean MSE and Pearson
+  mean_mse <- mean(top_n_teams$MSE)
+  mean_pearson <- mean(top_n_teams$Pearson)
+  
+  # Store results
+  mean_mse_list <- c(mean_mse_list, mean_mse)
+  mean_pearson_list <- c(mean_pearson_list, mean_pearson)
+}
+
+# Create data frame for plotting
+plot_data <- data.frame(
+  Teams = team_counts,
+  Mean_MSE = mean_mse_list,
+  Mean_Pearson = mean_pearson_list
+)
+
+# Plot the results Mean_Pearson
+ggplot(plot_data, aes(x = Teams)) +
+  geom_line(aes(y = Mean_MSE), color = "red") +
+  geom_line(aes(y = Mean_Pearson /15), color = "black") +  # Adjusted scaling factor for better visibility
+  labs(title = "Aggregated Metrics by Number of Teams",
+       x = "Number of Teams",
+       y = "Mean MSE (red)") +
+  scale_y_continuous(
+    name = "Mean MSE (red)",
+    sec.axis = sec_axis(~ . , name = "Mean Pearson (black)"),  # Inverse of the scaling factor
+    limits = c(0, 0.03),  # Limits for Mean MSE
+    expand = expansion(mult = c(0, 0.1))  # Keep expansion as is
+  ) +
+  theme_minimal()
+
+
+ggplot(plot_data, aes(x = Teams)) +
+  geom_line(aes(y = Mean_Pearson), color = "black") +  # Primary axis (left) for Mean Pearson
+  geom_line(aes(y = Mean_MSE * 15), color = "red") +   # Scale Mean MSE for the secondary axis (right)
+  labs(title = "Aggregated Metrics by Number of Teams",
+       x = "Number of Teams",
+       y = "Mean Pearson (black)") +  # Label for the primary y-axis
+  scale_y_continuous(
+    name = "Mean Pearson (black)",  # Primary y-axis label
+    sec.axis = sec_axis(~ . / 15 , name = "Mean MSE (red)"),  # Secondary y-axis with inverse scaling
+    expand = expansion(mult = c(0, 0.1))  # Keep expansion as is
+  ) +
+  theme_minimal()
+
+```
+
+```{r wrong}
+library(ggplot2)
+library(dplyr)
+
+# Assuming final_df is your data frame containing the relevant data
+
+# Arrange data frame by MSE ranking (smallest to largest)
+final_df <- final_df %>% arrange(MSE_ranking)
+
+# Initialize vectors to store results
+mean_mse_list <- c()
+mean_pearson_list <- c()
+team_counts <- 2:nrow(final_df)
+
+# Loop to calculate aggregated metrics for top N teams
+for (n in team_counts) {
+  # Subset data for top n teams
+  top_n_teams <- final_df[1:n, ]
+  
+  # Calculate mean MSE and Pearson for top N teams
+  mean_mse <- mean(top_n_teams$MSE)
+  mean_pearson <- mean(top_n_teams$Pearson)
+  
+  # Store results in lists
+  mean_mse_list <- c(mean_mse_list, mean_mse)
+  mean_pearson_list <- c(mean_pearson_list, mean_pearson)
+}
+
+# Create data frame for plotting
+plot_data <- data.frame(
+  Teams = team_counts,
+  Mean_MSE = mean_mse_list,
+  Mean_Pearson = mean_pearson_list
+)
+
+# Plot the aggregated MSE and Pearson correlation
+ggplot(plot_data, aes(x = Teams)) +
+  geom_line(aes(y = Mean_MSE), color = "red") +
+  geom_line(aes(y = Mean_Pearson), color = "black") +
+  labs(title = "Aggregated Metrics by Number of Teams",
+       x = "Number of Teams",
+       y = "Mean Value") +
+  scale_y_continuous(
+    name = "Mean MSE (red)",
+    sec.axis = sec_axis(~ ., name = "Mean Pearson (black)")
+  ) +
+  theme_minimal()
+
+```
