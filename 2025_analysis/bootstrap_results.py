@@ -81,7 +81,6 @@ def select_final_round_submissions(
     query = (
         f"SELECT id, pearson_correlation, cosine, createdOn, submitterid FROM {subview_id} "
         f"WHERE score_status = 'SCORED' "
-        f"AND evaluationid = '{evaluation_id}'"
     )  # query_df should have columns: 'id' and 'submitterid'
     submissions = syn.tableQuery(query).asDataFrame()
 
