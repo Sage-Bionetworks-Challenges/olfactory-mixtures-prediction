@@ -40,7 +40,14 @@ def get_args():
     parser.add_argument("--subview_id", type=str, default=None)
     # either "Final Round DREAM Olfactory Mixtures Prediction Challenge 2025 - Task 1" or "Final Round DREAM Olfactory Mixtures Prediction Challenge 2025 - Task 2"
     parser.add_argument("--evaluation_id", type=str, default="Final Round DREAM Olfactory Mixtures Prediction Challenge 2025 - Task 1" if args.task == 1 else "Final Round DREAM Olfactory Mixtures Prediction Challenge 2025 - Task 2") 
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.evaluation_id is None:
+        args.evaluation_id = (
+            "Final Round DREAM Olfactory Mixtures Prediction Challenge 2025 - Task 1"
+            if args.task == 1
+            else "Final Round DREAM Olfactory Mixtures Prediction Challenge 2025 - Task 2"
+        )
+    return args
     
 def extract_gs_file(folder: str) -> str:
     """Extract goldstandard file from folder."""
