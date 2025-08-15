@@ -11,8 +11,6 @@ from glob import glob
 import os
 from sklearn.metrics import mean_squared_error
 from scipy.stats import pearsonr
-# Merge all team prediction columns together may be eliminated if no longer needed
-# from functools import reduce
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -21,8 +19,8 @@ import synapseclient
 
 
 SUBMISSION_VIEWS = {
-    "Task 1": "syn66279193",
-    "Task 2": "syn66484079"
+    "Task 1": "syn68879001",
+    "Task 2": "syn68878940"
 }
 
 INDEX_COL = "stimulus"
