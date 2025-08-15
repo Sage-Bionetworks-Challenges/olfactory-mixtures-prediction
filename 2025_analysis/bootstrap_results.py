@@ -39,7 +39,7 @@ def get_args():
     parser.add_argument("-m", "--metric", type=str, choices=["rmse", "pearson"], default="rmse")
     parser.add_argument("--subview_id", type=str, default=None)
     # either "Final Round DREAM Olfactory Mixtures Prediction Challenge 2025 - Task 1" or "Final Round DREAM Olfactory Mixtures Prediction Challenge 2025 - Task 2"
-    parser.add_argument("--evaluation_id", type=str, default="Final Round DREAM Olfactory Mixtures Prediction Challenge 2025 - Task 1" if args.task == 1 else "Final Round DREAM Olfactory Mixtures Prediction Challenge 2025 - Task 2") 
+    parser.add_argument("--evaluation_id", type=str, default=None)
     args = parser.parse_args()
     if args.evaluation_id is None:
         args.evaluation_id = (
