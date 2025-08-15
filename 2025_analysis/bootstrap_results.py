@@ -316,7 +316,7 @@ def main():
     team_names = [f"Team {i+1}" for i in range(boot_matrix.shape[1])]
 
     # Plot results
-    plot_bootstrapped_rmse_and_bayes(scores_matrix, bayes_factors, team_names)
+    plot_bootstrapped_rmse_and_bayes(scores_matrix, bayes_factors, team_names, args.output_prefix)
 
 if __name__ == "__main__":
     main()
