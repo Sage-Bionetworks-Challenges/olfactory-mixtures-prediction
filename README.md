@@ -17,7 +17,7 @@ that will be evaluated against a test dataset.
 
 Metrics returned and used for ranking are:
 
-####! 2024
+#### 2024
 
 - **Mean Root Mean Square Error (mRMSE)**: This metric
 measures the average difference between predicted and
