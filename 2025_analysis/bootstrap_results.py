@@ -76,6 +76,7 @@ def select_final_round_submissions(
     For each submitter, but one team, only the submission closest to August 8, 2025 is kept.
     If any of the IDs [9756929, 9756930, 9756939, 9756938, 9756943, 9756942] are present,
     keep only 9756929 if present, otherwise keep only 9756930 if present, and remove the rest.
+    Also manually add the permitted late submission for Task 2.
     """
 
     query = (
@@ -86,22 +87,31 @@ def select_final_round_submissions(
 
     # Special handling for the specified IDs
     replace_ids = [9756929, 9756930, 9756939, 9756938, 9756943, 9756942]
-    present_ids = [
-        rid for rid in replace_ids if rid in submissions['id'].values]
+    present_ids = [rid for rid in replace_ids if rid in submissions['id'].values]
     if present_ids:
         if 9756929 in present_ids:
-            submissions = submissions[~submissions['id'].isin(
-                replace_ids) | (submissions['id'] == 9756929)]
+            submissions = submissions[~submissions['id'].isin(replace_ids) | (submissions['id'] == 9756929)]
         elif 9756930 in present_ids:
-            submissions = submissions[~submissions['id'].isin(
-                replace_ids) | (submissions['id'] == 9756930)]
+            submissions = submissions[~submissions['id'].isin(replace_ids) | (submissions['id'] == 9756930)]
         else:
             submissions = submissions[~submissions['id'].isin(replace_ids)]
 
+    # Only add late submission for Task 2
+    if "Task 2" in evaluation_id or subview_id == SUBMISSION_VIEWS["Task 2"]:
+        entity = syn.get("syn68843729", downloadFile=False)
+        late_row = {
+            "submitterid": entity.createdBy,
+            "id": "syn68843729",
+            "pearson_correlation": 0.6668633229642209,
+            "cosine": 0.22813314634185586,
+            "createdOn": 1754692655346,
+            "createdOn_diff": 4943654
+        }
+        submissions = pd.concat([submissions, pd.DataFrame([late_row])], ignore_index=True)
+
     # Find the submission closest to August 8, 2025 for each submitter
     target_date = int(pd.Timestamp("2025-08-08T23:59:59Z").timestamp() * 1000)
-    submissions['createdOn_diff'] = np.abs(
-        submissions['createdOn'] - target_date)
+    submissions['createdOn_diff'] = np.abs(submissions['createdOn'] - target_date)
     submissions = submissions.sort_values(['submitterid', 'createdOn_diff'])
     submissions = submissions.groupby('submitterid', as_index=False).first()
 
@@ -111,6 +121,12 @@ def select_final_round_submissions(
         ascending=True, method="min", na_option='bottom')
     submissions['final_rank'] = (
         submissions['pearson_rank'] + submissions['cosine_rank']) / 2
+
+    # Reorder columns
+    # submissions = submissions[[
+    #     "submitterid", "id", "pearson_correlation", "cosine",
+    #     "createdOn", "createdOn_diff", "pearson_rank", "cosine_rank", "final_rank"
+    # ]]
 
     return submissions
 
@@ -136,6 +152,16 @@ def load_team_predictions(syn: synapseclient.Synapse, submissions_df: pd.DataFra
         team_dfs.append(df)
     # Merge all team columns on 'stimulus'
     merged_df = team_dfs[0][[INDEX_COL]]
+    # Manually retrieve submission that was submitted 8 minutes post deadline
+    file_entity = syn.get("syn68843729", downloadFile=True)
+    file_path = file_entity.path 
+    late_df = pd.read_csv(file_path) 
+    late_df = late_df.sort_values(INDEX_COL).reset_index(drop=True)
+    feature_cols = [col for col in late_df.columns if col != INDEX_COL]
+    team_name = f"team_3502038"
+    late_df = late_df[[INDEX_COL] + feature_cols]
+    late_df = late_df.rename(columns={col: team_name for col in feature_cols})
+    team_dfs.append(late_df)
     for df in team_dfs:
         merged_df = pd.merge(merged_df, df, on=INDEX_COL)
     return merged_df
