@@ -34,7 +34,7 @@ def get_args():
     parser.add_argument(
         "-o", "--output_prefix", type=str, default="olfactory-mixtures-prediction_BF"
     )
-    parser.add_argument("-n", "--n_bootstraps", type=int, default=10000)
+    parser.add_argument("-n", "--n_bootstraps", type=int, default=100) #change back to 10000 once code runs
     parser.add_argument("-s", "--sample_pct", type=float, default=0.1)
     parser.add_argument("-m", "--metric", type=str,
                         choices=["rmse", "pearson"], default="rmse")
@@ -100,7 +100,7 @@ def select_final_round_submissions(
     if "Task 2" in evaluation_id or subview_id == SUBMISSION_VIEWS["Task 2"]:
         entity = syn.get("syn68843729", downloadFile=False)
         late_row = {
-            "submitterid": entity.createdBy,
+            "submitterid": f"team_{entity.createdBy}",
             "id": "syn68843729",
             "pearson_correlation": 0.6668633229642209,
             "cosine": 0.22813314634185586,
@@ -134,36 +134,38 @@ def select_final_round_submissions(
 def load_team_predictions(syn: synapseclient.Synapse, submissions_df: pd.DataFrame) -> pd.DataFrame:
     """
     Load prediction files for each team (one per team), return a DataFrame with columns:
-    'stimulus', team1, team2, ..., teamN
+    'stimulus', team1_pred1, team1_pred2, ..., teamN_predM
     """
     team_dfs = []
     for _, row in submissions_df.iterrows():
         team_id = row['submitterid']
         sub_id = row['id']
-        file_path = syn.getSubmission(sub_id)['filePath']
-        df = pd.read_csv(file_path)
+        if sub_id == "syn68843729":
+            # Special late submission: retrieve with syn.get
+            file_entity = syn.get(sub_id, downloadFile=True)
+            file_path = file_entity.path
+            df = pd.read_csv(file_path)
+        else:
+            file_path = syn.getSubmission(sub_id)['filePath']
+            df = pd.read_csv(file_path)
         df = df.sort_values(INDEX_COL).reset_index(drop=True)
-        # Only keep feature columns and stimulus
         feature_cols = [col for col in df.columns if col != INDEX_COL]
-        team_name = f"team_{team_id}"
-        df = df[[INDEX_COL] + feature_cols]
-        # Rename feature columns to team name (for stacking)
-        df = df.rename(columns={col: team_name for col in feature_cols})
+        rename_dict = {col: f"team_{team_id}_{col}" for col in feature_cols}
+        df = df.rename(columns=rename_dict)
+        df = df[[INDEX_COL] + list(rename_dict.values())]
         team_dfs.append(df)
     # Merge all team columns on 'stimulus'
-    merged_df = team_dfs[0][[INDEX_COL]]
-    # Manually retrieve submission that was submitted 8 minutes post deadline
-    file_entity = syn.get("syn68843729", downloadFile=True)
-    file_path = file_entity.path 
-    late_df = pd.read_csv(file_path) 
-    late_df = late_df.sort_values(INDEX_COL).reset_index(drop=True)
-    feature_cols = [col for col in late_df.columns if col != INDEX_COL]
-    team_name = f"team_3502038"
-    late_df = late_df[[INDEX_COL] + feature_cols]
-    late_df = late_df.rename(columns={col: team_name for col in feature_cols})
-    team_dfs.append(late_df)
-    for df in team_dfs:
-        merged_df = pd.merge(merged_df, df, on=INDEX_COL)
+    merged_df = team_dfs[0]
+    for df in team_dfs[1:]:
+        merged_df = pd.merge(merged_df, df, on=INDEX_COL, how='outer')
+    print(list(merged_df.columns))
+    print(merged_df.shape)
+    # After merging
+    # comparable_df = merged_df.dropna()
+    # print(comparable_df)
+    #print(list(merged_df.columns))
+    # nan_columns = merged_df.columns[merged_df.isnull().any()].tolist()
+    # print(f"columns with NaN: {nan_columns}")
     return merged_df
 
 
@@ -196,18 +198,17 @@ def bootstrap_scores(
     gold_values = gold_df[feature_cols].values if set(feature_cols).issubset(
         gold_df.columns) else gold_df.drop(columns=[INDEX_COL]).values
 
-    for team_idx, team in enumerate(feature_cols):
-        pred_values = pred_df[team].values
+    for team_idx, team_col in enumerate(feature_cols):
+        print(f"Processing {team_col} ({team_idx+1}/{len(feature_cols)})") #used to determine the bottleneck
+        # Extract feature name from column (after last underscore)
+        feature_name = team_col.split('_', 2)[-1] if team_col.count('_') > 1 else team_col.split('_')[-1]
+        pred_values = pred_df[team_col].values
+        gold_values = gold_df[feature_name].values
         for i in range(n_bootstraps):
             idx = np.random.choice(n_samples, n_select, replace=True)
             gold_sample = gold_values[idx]
             pred_sample = pred_values[idx]
-            if metric == "rmse":
-                score = np.sqrt(mean_squared_error(gold_sample, pred_sample))
-            elif metric == "pearson":
-                score, _ = pearsonr(gold_sample, pred_sample)
-            else:
-                raise ValueError("Unsupported metric")
+            score = np.sqrt(mean_squared_error(gold_sample, pred_sample))
             scores[i, team_idx] = score
     return scores
 
